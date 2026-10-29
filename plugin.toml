@@ -1,0 +1,6 @@
+schema = 1
+id = "go-navigation"
+name = "Go Navigation"
+version = "1.2.1"
+description = "Unified Go definition and reference navigation with reusable workspace language servers."
+window = "window.luau"
