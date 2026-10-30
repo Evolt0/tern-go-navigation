@@ -1,37 +1,69 @@
 # Go Navigation — a Tern plugin
 
-在 Tern **原生 Go 编辑器**中，一次查看符号的定义与调用 / 引用，或按名称搜索当前项目的函数、方法、类型和变量，预览源码后跳转。不替换编辑器，不要求先保存文件。
+**English** | [简体中文](README.zh-CN.md)
 
-![Tern 原生选择器：定义与调用分组，文件行列和命中行代码预览](assets/navigation-preview.png)
+Navigate Go code inside **Tern's native editor**. Find definitions and references together, search your project for functions and other symbols, preview the matching source line, and jump to the exact location. No replacement editor and no forced saves.
 
-![选择定义后跳转到 Go 源文件，光标定位到函数声明](assets/definition-jump.png)
+![Definitions and references grouped in Tern's native picker, with source-line previews](assets/navigation-preview.png)
 
-![在当前项目中按名称搜索函数，查找尚未打开文件里的定义](assets/project-symbol-search.png)
+![Jumping to a Go function declaration in the native editor](assets/definition-jump.png)
 
-## 功能亮点
+![Searching the current project for functions, including files that are not open](assets/project-symbol-search.png)
 
-- **一个入口** — 一次查询定义与引用，在同一列表分组展示；无需分别执行两个命令。
-- **项目内函数查询** — 输入名称即可搜索项目中未打开文件里的函数、方法、类型和变量，排除标准库、第三方依赖和未加入工作区的嵌套模块。
-- **先看代码，再跳转** — 每条结果显示文件名、行列和命中行代码，完整路径放在代码后面。
-- **支持未保存修改** — 查询和预览使用当前窗口的编辑器缓冲区，不隐式保存或修改源文件。
-- **提前加载并保留索引** — 聚焦本地 Go 文件后尝试后台预热；编辑器进程存活期间保留 gopls，不再因空闲 5 分钟退出。导航和项目搜索共用同一服务。
-- **可以返回** — 保留窗口内跳转历史；光标或缓冲区改变后，不应用过期的跳转结果。
-- **Go 工作区与 Unicode** — 支持 `go.mod`、`go.work`，处理 Tab、中文、emoji 和组合字符的位置转换。
+## Highlights
 
-## 安装
+- **One navigation command** — definitions first, references next, in one deduplicated list.
+- **Project-wide symbol search** — find functions, methods, types, and package-level variables without opening their files first. Dependencies, the standard library, and unrelated modules stay out of the results.
+- **Preview before jumping** — each result shows its file, line, column, source line, and path.
+- **Unsaved buffers work** — queries and previews use the current window's editor content without modifying or saving source files.
+- **Prewarmed, persistent gopls** — loading starts in the background after focusing a Go file. Navigation and search share the same language server throughout the editor process's lifetime.
+- **Jump back safely** — keep a per-window jump history and reject stale navigation after the cursor or captured buffers change.
+- **Go workspaces and Unicode** — support `go.mod`, `go.work`, tabs, CJK characters, emoji, and combining characters.
 
-### 环境要求
+## Install
 
-- **Tern**，且终端中可以运行 `tern` 命令。已验证 `0.9.7 (c2f7563)`。
-- **Go 工具链**。本插件构建最低要求 Go 1.23；安装 gopls 时，Go 可能按 gopls 的要求自动下载更新的工具链。本机验证版本为 Go 1.27.3。
-- **gopls**。下面使用已验证的 `v0.21.1`。
-- **Git**，用于下载和更新源码。
+### Requirements
 
-已验证平台：**macOS Apple Silicon（arm64）**。其他 Unix 平台尚未验证；当前后端依赖 Unix socket 和进程信号，不支持 Windows。
+- **Tern**, with the `tern` command available. Tested with `0.9.7 (c2f7563)`.
+- **The Go toolchain and gopls**, even when using a prebuilt release. gopls needs Go to load and analyze your project. The examples use the tested gopls version `v0.21.1`.
+- **Git and GitHub SSH access** only if installing from source.
 
-### 从源码安装
+Release packages currently target **macOS Apple Silicon (`darwin-arm64`)**. Other Unix platforms have not been validated; Windows is not supported by the current Unix-socket/process implementation.
 
-当前安装方式是**下载源码 → 编译后端 → 链接插件**。仓库不包含后端二进制，也没有首次使用时自动构建的逻辑。
+The plugin source requires Go 1.23 or newer. Installing gopls may download a newer toolchain automatically according to gopls's requirements. Local verification used Go 1.27.3.
+
+### Release package — prebuilt plugin backend
+
+Download the versioned **`go-navigation-<version>-darwin-arm64.tar.gz`** and its **`.tar.gz.sha256`** checksum from [Releases](https://github.com/Evolt0/tern-go-navigation/releases). Use these named assets, not GitHub's automatically generated “Source code” archives.
+
+If no release is available yet, use the source installation below. Release assets are created by the version-tag workflow described under [Publishing releases](#publishing-releases).
+
+For version `1.3.0`, run these commands in the download directory:
+
+```sh
+# Still required for semantic Go navigation:
+go install golang.org/x/tools/gopls@v0.21.1
+
+shasum -a 256 -c go-navigation-1.3.0-darwin-arm64.tar.gz.sha256
+tar -xzf go-navigation-1.3.0-darwin-arm64.tar.gz
+tern plugin install ./go-navigation
+tern plugin list
+```
+
+The archive contains a complete plugin directory, including `bin/tern-go-navigation`, both READMEs, screenshots, the changelog, and third-party license notices. `tern plugin install` copies it into Tern's plugin directory, so the extracted download can be removed afterward.
+
+If you already have a **linked source installation**, unlink it before switching to a release package:
+
+```sh
+tern plugin unlink go-navigation
+tern plugin install ./go-navigation
+```
+
+Prebuilt binaries are not notarized. If macOS blocks execution, review the system's security prompt or build from source; the plugin does not disable system security checks.
+
+### From source
+
+The repository is named `tern-go-navigation`, so Git already creates a local directory with that name. No extra destination-directory argument is needed. The clone URL uses SSH:
 
 ```sh
 git clone git@github.com:Evolt0/tern-go-navigation.git
@@ -44,15 +76,21 @@ tern plugin link "$PWD"
 tern plugin list
 ```
 
-列表中应能看到 `go-navigation`，状态为 `ready`。打开一个 Go 项目中的 `.go` 文件，把光标放在符号上，按 **Ctrl+Option+G** 即可。
+Look for `go-navigation` with a `ready` status. Open a `.go` file in your project and press **Ctrl+Option+G**.
 
-如果已经下载源码，可直接在源码根目录执行 `go install`、`go build` 和 `tern plugin link`。链接安装直接使用这个目录，**安装后不要删除或移动它**。
+A linked installation runs directly from the checkout: **do not delete or move that directory**. Installing only the Git URL does not build the backend automatically; use the build-and-link steps above.
 
-> 不能仅运行 `tern plugin install <Git URL>` 就完成安装：插件需要上面的 Go 后端编译步骤。当前没有发布预编译安装包。
+### Update
 
-### 更新
+**Release installation:** download and verify the new release, extract it into a clean directory, then replace the installed copy:
 
-在已链接的源码目录中执行：
+```sh
+tern plugin install ./go-navigation --force
+```
+
+`--force` does not replace a linked source installation. Unlink that installation first if switching installation methods.
+
+**Linked source installation:** run inside the checkout:
 
 ```sh
 git pull --ff-only
@@ -60,89 +98,95 @@ go build -o bin/tern-go-navigation .
 tern plugin reload go-navigation
 ```
 
-重新构建后，下一次查询会使用新版本的后端服务；不需要重启 Tern。
+The next query uses the rebuilt backend; restarting Tern is not required.
 
-### 卸载
+### Uninstall
+
+For a copied release installation:
+
+```sh
+tern plugin remove go-navigation
+```
+
+For a linked source installation:
 
 ```sh
 tern plugin unlink go-navigation
 ```
 
-编辑器启动的语言服务会在所属 Tern 进程退出、后端二进制被更新或删除后回收；卸载后如需立即释放，可退出相关 Tern 进程。无 Tern 窗口上下文的独立 CLI 服务仍在空闲 5 分钟后退出。源码目录和自己安装的 gopls 不会被自动删除。
+Already-running editor-owned language servers are reclaimed when their owning Tern process exits, or when their backend executable is replaced or removed. Exit the relevant Tern process if you need immediate cleanup after unlinking. Standalone CLI sessions without a Tern window context still expire after five idle minutes. Your source checkout, Go installation, and gopls installation are not removed automatically.
 
-## 使用与快捷键
+## Keys and navigation
 
-把光标放在函数、类型或变量名上：
+Place the cursor on a Go function, type, or variable for navigation:
 
-| 快捷键（macOS） | 操作 | 命令面板 |
+| Key on macOS | Action | Command palette |
 | --- | --- | --- |
-| **Ctrl+Option+G** | 同时查询定义与调用 / 引用 | `Go: Navigate symbol` |
-| **Ctrl+Option+S** | 按名称搜索当前项目的函数 / 符号 | `Go: Search project symbols` |
-| **Ctrl+Option+B** | 返回跳转前的位置 | `Go: Jump back` |
-| **↑ / ↓** | 在结果列表中选择位置 | — |
-| **Enter** | 跳到所选位置 | — |
-| **Esc** | 关闭结果列表 | — |
+| **Ctrl+Option+G** | Find definitions and references together | `Go: Navigate symbol` |
+| **Ctrl+Option+S** | Search symbols in the current project | `Go: Search project symbols` |
+| **Ctrl+Option+B** | Return to the previous jump location | `Go: Jump back` |
+| **↑ / ↓** | Select a result | — |
+| **Enter** | Jump to the selected result | — |
+| **Esc** | Dismiss the picker | — |
 
-- **定义**排在前面，**调用 / 引用**排在后面；重复位置只保留一次，单个结果直接跳转。
-- 引用包括函数调用、变量读写和类型使用，不仅是函数调用。
-- 代码预览优先取未保存缓冲区，只去掉行首缩进和末尾空白，保留代码内部空白。
-- 预览复用查询已读取的源文本，不增加 gopls 请求或文件读取；较长内容由原生列表省略显示。
-- 历史保存在当前窗口内存中，插件重载后清空。
+Definitions precede references; duplicate locations are removed. A single navigation result opens directly. References include calls, variable reads/writes, and type uses—not only function calls.
 
-自定义键位使用动作 `plugin.go-navigation.navigate`、`plugin.go-navigation.symbols` 和 `plugin.go-navigation.back`。旧版的 `plugin.go-navigation.definition`、`plugin.go-navigation.references` 已合并移除，原独立引用快捷键不再注册。
+Source previews prefer unsaved buffers. They trim leading indentation and trailing whitespace while preserving whitespace inside the code. Previews reuse source text already read by the query; they do not issue extra gopls requests or file reads. Long rows are truncated by Tern's native picker.
 
-## 搜索当前项目的函数
+Jump history lives in the current window and is cleared on plugin reload. Custom keybindings can target `plugin.go-navigation.navigate`, `plugin.go-navigation.symbols`, and `plugin.go-navigation.back`. The older separate `definition` and `references` actions have been removed.
 
-1. 打开当前项目中的任意本地 `.go` 文件，不必把光标放在函数名上。
-2. 按 **Ctrl+Option+S**，输入函数或符号名，例如 `FindCustomer`，按 Enter 查询。
-3. 在结果列表中查看符号名、文件行列和代码预览，再按 Enter 跳转；Ctrl+Option+B 返回原位置。
+## Search functions in your project
 
-搜索由 gopls 的 `workspace/symbol` 提供，支持模糊匹配；未打开文件和当前窗口的未保存修改都参与查询。范围是当前模块，或 `go.work` 显式加入的模块（可以位于工作区目录外）；标准库、第三方依赖、vendor、未加入的嵌套模块和符号链接逃逸位置不作为结果。
+1. Open any local `.go` file in the project. The cursor does not need to be on a function name.
+2. Press **Ctrl+Option+S**, enter a name such as `FindCustomer`, and press Enter to search.
+3. Inspect the symbol name, source preview, and file location, then press Enter to jump. **Ctrl+Option+B** returns to the origin.
 
-当前 Tern 原生输入框在按 Enter 后才提交查询，不是逐键向服务器查询。结果列表中的输入用于进一步过滤已返回的结果。gopls v0.21.1 最多返回 100 个排名最高的符号，结果较多时请缩小关键词；这不是全文搜索，注释和函数体中的普通文本不作为符号命中。
+Search uses gopls `workspace/symbol` with fuzzy matching. It includes unopened files and unsaved changes in the current window. Its scope is the current module or the modules explicitly enrolled in `go.work`, including members outside the workspace directory. Standard-library symbols, external dependencies, vendor directories, unenrolled nested modules, and symlink escapes are excluded.
 
-## 索引与缓存
+Tern's native prompt submits a query on Enter; it does not query the server on every keystroke. Typing in the result picker filters the results already returned. gopls v0.21.1 returns at most 100 top-ranked symbols, so use a more specific query when needed. This is symbol search, not full-text search over comments or function bodies.
 
-- **内存会话**：按窗口、工作区和工具链环境复用 gopls。打开 Go 文件后提前加载；编辑器存活期间不会因短暂空闲丢弃索引。文件和未保存内容按变化同步，查询不重新扫描整个项目。
-- **磁盘缓存**：直接使用 gopls 自身持久化的包摘要、交叉引用和符号索引，macOS 默认位于 `~/Library/Caches/gopls` 下，可由 `GOPLSCACHE` 改变缓存根目录。重启后可以复用这些缓存，但仍需加载工作区元数据。
-- **不缓存过期结果**：插件不把上一次查询结果当成新答案；导航与搜索读取同一持续更新的语言服务。依赖目录发现仍在初始化和模块配置变化时运行，用于保留外部依赖修改的监听覆盖。
+## Indexes and caching
 
-参考：[VS Code 跨文件符号导航](https://code.visualstudio.com/docs/editing/editingevolved#open-symbol-by-name)、[Zed 的 Go / gopls 支持](https://zed.dev/docs/languages/go)、[gopls 持久化索引与增量更新](https://go.dev/blog/gopls-scalability)。
+- **Live sessions:** reuse gopls by window, workspace, and toolchain environment. A Go file triggers a background warmup attempt; short idle periods do not discard the editor's index. Queries synchronize changed files and buffers rather than rescanning the entire project.
+- **Disk cache:** use gopls's own persistent package summaries, cross-reference indexes, and symbol indexes. On macOS the default location is under `~/Library/Caches/gopls`; `GOPLSCACHE` changes the cache root. A new process can reuse cached data but still needs to load workspace metadata.
+- **No stale-result cache:** navigation and search ask the same continuously updated language service. Dependency-directory discovery remains necessary at initialization and after module configuration changes to preserve observation of external dependency edits.
 
-## 工具链查找与排障
+References: [VS Code symbol navigation](https://code.visualstudio.com/docs/editing/editingevolved#open-symbol-by-name), [Zed's Go/gopls support](https://zed.dev/docs/languages/go), and [gopls persistent indexes and incremental updates](https://go.dev/blog/gopls-scalability).
 
-`gopls` 的查找顺序：环境变量 `GOPLS` 指定的可执行文件 → `PATH` → `$HOME/go/bin/gopls`。
+## Tool discovery and troubleshooting
 
-Go 工具链优先沿用 `PATH`；GUI 环境找不到 `go` 时，依次检查 `$GOROOT/bin`、`/opt/homebrew/bin`、`/usr/local/go/bin`、`/usr/local/bin`，只把找到的目录加入 gopls 子进程环境，不修改系统环境。
+The backend finds gopls through `GOPLS`, then `PATH`, then `$HOME/go/bin/gopls`.
 
-- 提示无法启动 gopls：检查 `gopls version`；自定义安装目录需通过 Tern 继承的 `GOPLS` 或 `PATH` 指定。
-- 提示找不到 Go：检查 `go version`；非标准安装位置需通过 Tern 继承的 `PATH` 或 `GOROOT` 指定。
-- 工作区加载失败：错误提示会保留 gopls 的具体原因，而不是只显示 `no views`。
-- 源码有修改但插件行为没变：重新运行 `go build -o bin/tern-go-navigation .` 和 `tern plugin reload go-navigation`。
+It preserves a Go executable already on `PATH`. When a GUI-launched process cannot find Go, it checks `$GOROOT/bin`, `/opt/homebrew/bin`, `/usr/local/go/bin`, and `/usr/local/bin`, adding only the selected directory to the gopls child environment. It does not modify your system environment.
 
-## 当前边界
+- **Cannot start gopls:** check `gopls version`; expose custom locations through `GOPLS` or `PATH` inherited by Tern.
+- **Go toolchain not found:** check `go version`; expose nonstandard installations through Tern's `PATH` or `GOROOT`.
+- **Workspace loading fails:** the error preserves the underlying gopls explanation instead of only reporting `no views`.
+- **Source changes are not reflected in the plugin:** rebuild with `go build -o bin/tern-go-navigation .`, then run `tern plugin reload go-navigation`.
 
-- **不支持普通符号的 Command+点击。** Tern 0.9.7 的[公开路由接口](https://docs.stencil.so/tern/guides/routing.html#link-requests)只提供链接点击事件，没有普通代码符号的点击位置回调。已用真实符号点击和 URL 点击对照验证；插件没有引入全局鼠标监听或辅助功能权限。
-- **预览是结果行内的一行代码**，不是独立的选中项预览面板。当前原生选择器没有对应面板或选中变化回调。
-- 仅支持本机文件；远程主机文件会明确提示不支持。
-- 未保存的 `go.mod` / `go.work` 不作为 overlays，修改模块配置后需保存。
-- 首次加载仍需读取包元数据和建立索引，大项目可能较慢；请求上限 45 秒。预热尚未完成就发起查询仍需等待，查询取消或语言服务失败后会重新初始化。
+## Limitations
 
-## 性能
+- **No Command+click on ordinary code symbols.** Tern 0.9.7's [public routing API](https://docs.stencil.so/tern/guides/routing.html#link-requests) exposes link clicks, not ordinary-symbol clicks with document coordinates. A real desktop probe confirmed that distinction. No global mouse interception or accessibility-permission workaround is installed.
+- **Previews are inline source lines**, not a separate selected-item preview pane. The native picker does not expose such a pane or a selection-change callback.
+- Only local files are supported; remote-host files receive an explicit unsupported message.
+- Unsaved `go.mod` and `go.work` changes are not overlays; save module configuration changes first.
+- First-time loading still costs time, especially for large projects. Requests have a 45-second deadline. A query issued before warmup finishes still waits; cancellation or a language-server failure causes the affected session to be initialized again.
 
-1.3.0 本机实测如下。后端对比使用同一份插件源码副本；桌面数据使用独立 Go 示例项目，不代表大型仓库表现。优化重点是把首次加载移到后台并避免空闲后的重复冷启动，不是宣称已有热查询算法突然变快。
+## Performance
 
-| 场景 | 耗时 |
+These local 1.3.0 measurements compare the backend against a frozen copy of the plugin's source. Desktop measurements use a separate small Go example. They are not a guarantee for large repositories: the improvement moves loading ahead of interaction and avoids repeated cold starts, rather than claiming a faster already-warm query algorithm.
+
+| Scenario | Time |
 | --- | ---: |
-| 1.2.1 首次直接导航 | 1179.1 ms |
-| 1.2.1 后续热导航 | 6.0–6.9 ms |
-| 1.3.0 后台预热 | 971.5 ms |
-| 1.3.0 预热后的第一次用户导航 | 24.7 ms |
-| 1.3.0 后续热导航 | 6.3–7.9 ms |
-| 桌面自动预热后，首次按键至导航结果 | 34.8 ms |
-| 桌面提交函数名至项目搜索结果 | 54.4 ms |
+| 1.2.1 first direct navigation | 1179.1 ms |
+| 1.2.1 subsequent warm navigation | 6.0–6.9 ms |
+| 1.3.0 background warmup | 971.5 ms |
+| 1.3.0 first user navigation after warmup | 24.7 ms |
+| 1.3.0 subsequent warm navigation | 6.3–7.9 ms |
+| Desktop first navigation after automatic warmup | 34.8 ms |
+| Desktop function-search submission to results | 54.4 ms |
 
-## 开发与验证
+## Development and verification
 
 ```sh
 go test -race ./...
@@ -150,12 +194,45 @@ go build -o bin/tern-go-navigation .
 tern plugin reload go-navigation
 ```
 
-集成测试需要 gopls，使用临时项目且禁用网络依赖；覆盖未保存缓冲区、关闭 / 重开、源码行预览、Unicode 坐标、即时磁盘增删改、工作区外模块、模块配置变化、并发启动、原子保存、编辑器生命周期，以及项目符号搜索的更新与范围隔离。
+Integration tests require gopls and use temporary projects without network dependencies. They cover unsaved buffers, close/reopen transitions, previews, Unicode positions, immediate disk edits, external workspace modules, configuration changes, concurrent startup, atomic saves, editor lifetime, and symbol-search scope.
 
-已在真实 Tern 桌面验证合并列表、代码预览、定义 / 调用跳转、返回、过期结果保护和项目函数查询；确认按键前已自动预热，搜索未打开文件与未保存改名成功，标准库符号被排除，连续操作复用同一 gopls 进程。上方截图来自实际运行的插件与示例 Go 项目，不是设计稿。
+Real Tern desktop verification covers the combined picker, previews, jumps, history, stale-result rejection, automatic warmup, unopened-file searches, and unsaved renames. The screenshots above show the running plugin, not mockups.
 
-实现分工：`window.luau` 负责原生编辑器、预热和选择器；`main.go` 负责请求与位置转换；`daemon.go`、`session.go`、`rpc.go` 负责常驻语言服务；`symbols.go` 负责项目符号查询和范围过滤；`watch.go` 负责文件变更同步。
+`window.luau` integrates the native editor, warmup, and picker; `main.go` handles requests and positions; `daemon.go`, `session.go`, and `rpc.go` maintain language-server sessions; `symbols.go` implements scoped project search; `watch.go` synchronizes file changes.
 
-## 变更记录
+## Publishing releases
 
-见 [Changelog](docs/reference/changelog.md)。
+**Yes—GitHub Actions packages and publishes releases automatically.** The workflow is [`.github/workflows/release.yml`](https://github.com/Evolt0/tern-go-navigation/blob/main/.github/workflows/release.yml).
+
+On a pushed `vX.Y.Z` tag, it:
+
+1. Requires the tag version to match `plugin.toml`.
+2. Uses a native macOS arm64 runner, installs Go and the pinned gopls, and runs the race-enabled tests.
+3. Builds a fresh plugin backend, packages the runtime files and documentation, and generates a SHA-256 checksum.
+4. Extracts the package and exercises the packaged binary against a real temporary Go project.
+5. Publishes the archive and checksum to GitHub Releases after those checks succeed.
+
+Only the publishing job receives `contents: write`; it uses GitHub's built-in token, so no personal access token is required. Manual **Run workflow** executions build downloadable Actions artifacts but **do not publish a Release**. Enable Actions in the repository if it is disabled.
+
+For the current `1.3.0` version, after committing the workflow, version, and changelog changes:
+
+```sh
+git push origin main
+git tag -a v1.3.0 -m "Release v1.3.0"
+git push origin v1.3.0
+```
+
+For later releases, update `plugin.toml` and the changelog first, then tag that commit with the matching version. Do not move or reuse a published tag. The workflow does not overwrite an existing Release; publish a new version for corrections.
+
+For local packaging, maintainers need **Go and Python 3.9+**; smoke verification also needs gopls and a macOS arm64 host:
+
+```sh
+python3 scripts/package.py --output dist
+python3 scripts/smoke_release.py dist/go-navigation-1.3.0-darwin-arm64.tar.gz
+```
+
+Consumers of the prebuilt package do not need Python or the plugin source. They still need Go and gopls at runtime.
+
+## Changelog
+
+See [Changelog](docs/reference/changelog.md) (Chinese).

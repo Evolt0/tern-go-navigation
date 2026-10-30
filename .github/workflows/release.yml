@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and smoke darwin-arm64
+    runs-on: macos-15
+    timeout-minutes: 30
+    outputs:
+      archive: ${{ steps.metadata.outputs.archive }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate manifest and release tag
+        id: metadata
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = push ]; then
+            python3 scripts/package.py --check-tag "$RELEASE_TAG"
+          fi
+          python3 - <<'PY'
+          import os
+          import sys
+          sys.path.insert(0, "scripts")
+          from package import ROOT, archive_name, manifest_version
+          version = manifest_version((ROOT / "plugin.toml").read_text(encoding="utf-8"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("archive=" + archive_name(version) + "\n")
+          PY
+
+      - name: Set up stable Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Install real language server
+        run: |
+          GOBIN="$RUNNER_TEMP/gopls-bin" go install golang.org/x/tools/gopls@v0.21.1
+          echo "GOPLS=$RUNNER_TEMP/gopls-bin/gopls" >> "$GITHUB_ENV"
+
+      - name: Run race-enabled tests
+        run: go test -race ./...
+
+      - name: Package release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = push ]; then
+            python3 scripts/package.py --output dist --tag "$RELEASE_TAG"
+          else
+            python3 scripts/package.py --output dist
+          fi
+
+      - name: Smoke the packaged executable
+        env:
+          ARCHIVE: ${{ steps.metadata.outputs.archive }}
+        run: python3 scripts/smoke_release.py "dist/$ARCHIVE"
+
+      - name: Upload archive and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: go-navigation-darwin-arm64
+          path: |
+            dist/${{ steps.metadata.outputs.archive }}
+            dist/${{ steps.metadata.outputs.archive }}.sha256
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    name: Publish tagged release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified build artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: go-navigation-darwin-arm64
+          path: dist
+
+      - name: Verify checksum and create release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          ARCHIVE: ${{ needs.build.outputs.archive }}
+        run: |
+          sha256sum -c "$ARCHIVE.sha256"
+          gh release create "$RELEASE_TAG" "$ARCHIVE" "$ARCHIVE.sha256" \
+            --verify-tag --generate-notes
