@@ -49,11 +49,11 @@ go install golang.org/x/tools/gopls@v0.21.1
 | Linux | Intel / AMD x86-64 | `linux-amd64` |
 | Linux | ARM64 / AArch64 | `linux-arm64` |
 
-以下以 `1.3.0` 为例。下载 `go-navigation-1.3.0-<target>.tar.gz` 及相邻的 `.tar.gz.sha256`，放入同一目录后执行：
+以下以 `1.3.1` 为例。下载 `go-navigation-1.3.1-<target>.tar.gz` 及相邻的 `.tar.gz.sha256`，放入同一目录后执行：
 
 ```sh
 target=darwin-arm64 # 按上表替换为你的平台。
-archive="go-navigation-1.3.0-${target}.tar.gz"
+archive="go-navigation-1.3.1-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -95,11 +95,11 @@ Git 默认克隆到同名的 `tern-go-navigation` 目录，不需要额外指定
 
 ### 更新复制安装的发布包
 
-从 Releases 下载目标平台的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.3.0` 为例，升级时须将版本和 target 换为目标附件：
+从 Releases 下载目标平台的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.3.1` 为例，升级时须将版本和 target 换为目标附件：
 
 ```sh
 target=darwin-arm64 # 按你的系统和处理器选择。
-archive="go-navigation-1.3.0-${target}.tar.gz"
+archive="go-navigation-1.3.1-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -138,7 +138,7 @@ tern plugin remove go-navigation
 tern plugin unlink go-navigation
 ```
 
-编辑器启动的语言服务会在所属 Tern 进程退出、后端二进制被更新或删除后回收；卸载后如需立即释放，可退出相关 Tern 进程。无 Tern 窗口上下文的独立 CLI 服务仍在空闲 5 分钟后退出。源码目录和自己安装的 gopls 不会被自动删除。
+关闭 Go 文件或项目 tab 后，只要所属 Tern 进程仍在，插件会保留会话。插件 helper 和对应的 gopls 转发客户端会在所属 Tern 进程退出、后端二进制被更新或删除后回收；OMP 等其他客户端仍在使用时，共享 daemon 会继续运行。最后一个客户端断开后，gopls 默认等待 1 分钟退出。无 Tern 窗口上下文的独立 CLI helper 仍在空闲 5 分钟后退出。源码目录和自己安装的 gopls 不会被自动删除。
 
 ## 使用与快捷键
 
@@ -173,11 +173,32 @@ tern plugin unlink go-navigation
 
 ## 索引与缓存
 
-- **内存会话**：按窗口、工作区和工具链环境复用 gopls。打开 Go 文件后提前加载；编辑器存活期间不会因短暂空闲丢弃索引。文件和未保存内容按变化同步，查询不重新扫描整个项目。
+- **内存会话**：窗口、工作区和工具链环境各自保留独立缓冲区，兼容的客户端连接原生共享 gopls daemon。打开 Go 文件后提前加载；编辑器存活期间不会因短暂空闲丢弃会话。文件和未保存内容按变化同步，查询不重新扫描整个项目。
 - **磁盘缓存**：直接使用 gopls 自身持久化的包摘要、交叉引用和符号索引，macOS 默认位于 `~/Library/Caches/gopls` 下，可由 `GOPLSCACHE` 改变缓存根目录。重启后可以复用这些缓存，但仍需加载工作区元数据。
 - **不缓存过期结果**：插件不把上一次查询结果当成新答案；导航与搜索读取同一持续更新的语言服务。依赖目录发现仍在初始化和模块配置变化时运行，用于保留外部依赖修改的监听覆盖。
 
 参考：[VS Code 跨文件符号导航](https://code.visualstudio.com/docs/editing/editingevolved#open-symbol-by-name)、[Zed 的 Go / gopls 支持](https://zed.dev/docs/languages/go)、[gopls 持久化索引与增量更新](https://go.dev/blog/gopls-scalability)。
+
+### 与 OMP 共用 gopls
+
+当前源码后端使用 `gopls -remote=auto serve`：服务存在时连接，没有时自动启动，不依赖 OMP 正在运行。OMP 与编辑器保留各自的未保存缓冲区和 Go 环境，共享可复用的缓存。
+
+将下列配置合并到 OMP 当前用户配置目录的 `lsp.json`（通常为 `~/.omp/agent/lsp.json`），保留已有的其他语言服务配置：
+
+```json
+{
+  "servers": {
+    "gopls": {
+      "args": ["-remote=auto", "serve"]
+    }
+  }
+}
+```
+
+每个已经打开的 OMP 会话都需要重载一次 LSP 配置（`action: "reload", file: "*"`），或重新打开该 OMP 会话；旧客户端在重载前会继续使用原启动参数。两边需使用兼容的 gopls 构建和相同的运行目录（`XDG_RUNTIME_DIR`，否则使用系统临时目录）。
+
+活动监视器中仍可能出现多个 `gopls`：共享 daemon、轻量转发客户端及 Go telemetry 辅助进程。各客户端的工作区视图仍独立，实际内存收益取决于可共享缓存的比例。从 `v1.3.1` 起发布包包含此模式，OMP 需采用上面的配置才能参与共享。
+
 
 ## 工具链查找与排障
 
@@ -189,7 +210,6 @@ Go 工具链优先沿用 `PATH`；GUI 环境找不到 `go` 时，依次检查 `$
 - 提示找不到 Go：检查 `go version`；非标准安装位置需通过 Tern 继承的 `PATH` 或 `GOROOT` 指定。
 - 工作区加载失败：错误提示会保留 gopls 的具体原因，而不是只显示 `no views`。
 - 源码有修改但插件行为没变：重新运行 `go build -o bin/tern-go-navigation .` 和 `tern plugin reload go-navigation`。
-- Releases 页面没有附件：当前尚未发布 Release，请使用源码安装。手动运行工作流只生成 Actions artifacts，不会创建 Release。
 
 ## 当前边界
 
@@ -235,13 +255,13 @@ tern plugin reload go-navigation
 
 ```sh
 python3 scripts/package.py --target darwin-arm64 --output dist
-python3 scripts/smoke_release.py dist/go-navigation-1.3.0-darwin-arm64.tar.gz
+python3 scripts/smoke_release.py dist/go-navigation-1.3.1-darwin-arm64.tar.gz
 ```
 
-`--output` 默认为 `dist`，`--source PATH` 可选择单独的源码 checkout，默认使用本仓库。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查验证实际二进制格式与架构，并运行归档中的 CLI。可通过 `--tag v1.3.0` 校验版本，或只校验而不打包：
+`--output` 默认为 `dist`，`--source PATH` 可选择单独的源码 checkout，默认使用本仓库。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查验证实际二进制格式与架构，并运行归档中的 CLI。可通过 `--tag v1.3.1` 校验版本，或只校验而不打包：
 
 ```sh
-python3 scripts/package.py --check-tag v1.3.0
+python3 scripts/package.py --check-tag v1.3.1
 ```
 
 ### 发布流程

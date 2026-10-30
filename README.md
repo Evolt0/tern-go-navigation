@@ -43,14 +43,14 @@ Download **`go-navigation-<version>-<target>.tar.gz`** and its **`.tar.gz.sha256
 | Linux | Intel / AMD x86-64 | `linux-amd64` |
 | Linux | ARM64 / AArch64 | `linux-arm64` |
 
-For version `1.3.0`, choose the target from the table and run these commands in the download directory:
+For version `1.3.1`, choose the target from the table and run these commands in the download directory:
 
 ```sh
 # Still required for semantic Go navigation:
 go install golang.org/x/tools/gopls@v0.21.1
 
 target=darwin-arm64 # Replace with your target from the table.
-archive="go-navigation-1.3.0-${target}.tar.gz"
+archive="go-navigation-1.3.1-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -125,7 +125,7 @@ For a linked source installation:
 tern plugin unlink go-navigation
 ```
 
-Already-running editor-owned language servers are reclaimed when their owning Tern process exits, or when their backend executable is replaced or removed. Exit the relevant Tern process if you need immediate cleanup after unlinking. Standalone CLI sessions without a Tern window context still expire after five idle minutes. Your source checkout, Go installation, and gopls installation are not removed automatically.
+Closing a file or project tab while its Tern process remains alive retains the cached client. The plugin helper and its gopls forwarding client are reclaimed when their owning Tern process exits, or when the backend executable is replaced or removed. Other clients, including OMP, keep their shared daemon alive; gopls exits it by default one minute after the last client disconnects. Standalone CLI helpers without a Tern window context still expire after five idle minutes. Your source checkout, Go installation, and gopls installation are not removed automatically.
 
 ## Keys and navigation
 
@@ -158,11 +158,32 @@ Tern's native prompt submits a query on Enter; it does not query the server on e
 
 ## Indexes and caching
 
-- **Live sessions:** reuse gopls by window, workspace, and toolchain environment. A Go file triggers a background warmup attempt; short idle periods do not discard the editor's index. Queries synchronize changed files and buffers rather than rescanning the entire project.
+- **Live sessions:** keep independent buffers per window, workspace, and toolchain environment while connecting compatible clients to the native shared gopls daemon. A Go file triggers a background warmup attempt; short idle periods do not discard the editor's session. Queries synchronize changed files and buffers rather than rescanning the entire project.
 - **Disk cache:** use gopls's own persistent package summaries, cross-reference indexes, and symbol indexes. On macOS the default location is under `~/Library/Caches/gopls`; `GOPLSCACHE` changes the cache root. A new process can reuse cached data but still needs to load workspace metadata.
 - **No stale-result cache:** navigation and search ask the same continuously updated language service. Dependency-directory discovery remains necessary at initialization and after module configuration changes to preserve observation of external dependency edits.
 
 References: [VS Code symbol navigation](https://code.visualstudio.com/docs/editing/editingevolved#open-symbol-by-name), [Zed's Go/gopls support](https://zed.dev/docs/languages/go), and [gopls persistent indexes and incremental updates](https://go.dev/blog/gopls-scalability).
+
+### Sharing gopls with OMP
+
+The current source backend runs `gopls -remote=auto serve`. It connects to the native daemon when available and starts one when needed, so navigation works without OMP. OMP and the editor retain separate unsaved buffers and Go environments while sharing reusable caches.
+
+Merge this override into OMP's active user `lsp.json` (normally `~/.omp/agent/lsp.json`), preserving any other server entries:
+
+```json
+{
+  "servers": {
+    "gopls": {
+      "args": ["-remote=auto", "serve"]
+    }
+  }
+}
+```
+
+In each already-running OMP session, reload its LSP configuration with `action: "reload", file: "*"`, or reopen that OMP session. Existing clients retain their previous launch arguments until reloaded. Both sides must use a compatible gopls build and the same runtime directory (`XDG_RUNTIME_DIR`, or the system temporary directory).
+
+Activity Monitor can still show several `gopls` entries: the shared daemon, lightweight forwarding clients, and Go telemetry helpers. Workspace views remain independent, so memory savings depend on the amount of reusable cache. Release packages include this mode starting with `v1.3.1`; OMP needs the configuration above to participate.
+
 
 ## Tool discovery and troubleshooting
 
@@ -239,7 +260,7 @@ For local packaging, maintainers need **Go and Python 3.9+**; smoke verification
 
 ```sh
 python3 scripts/package.py --target darwin-arm64 --output dist
-python3 scripts/smoke_release.py dist/go-navigation-1.3.0-darwin-arm64.tar.gz
+python3 scripts/smoke_release.py dist/go-navigation-1.3.1-darwin-arm64.tar.gz
 ```
 
 `--target` defaults to the native platform and accepts the four targets listed above. Cross-compilation is supported; executing the smoke requires the matching OS and architecture. `--source PATH` selects a separate source checkout; the default is this repository.

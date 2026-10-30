@@ -436,3 +436,88 @@ func TestWatcherImmediateAtomicReplacementAndDirectoryDeletion(t *testing.T) {
 		t.Fatalf("missing directory deletion event: %+v", changes)
 	}
 }
+
+func TestSharedGoplsKeepsClientBuffersAndLifetimesIndependent(t *testing.T) {
+	integrationEnvironment(t)
+	runtimeDir, err := os.MkdirTemp("/tmp", "tern-gopls-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(runtimeDir) })
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	// Keep the real daemon private to this test and reclaim it promptly after
+	// its last client disconnects. The wrapper changes only the idle lifetime.
+	t.Setenv("TERN_TEST_GOPLS", os.Getenv("GOPLS"))
+	wrapper := filepath.Join(t.TempDir(), "gopls")
+	putFile(t, wrapper, "#!/bin/sh\nexec \"$TERN_TEST_GOPLS\" -remote.listen.timeout=5s \"$@\"\n")
+	if err := os.Chmod(wrapper, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOPLS", wrapper)
+	root, err := canonical(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	putFile(t, filepath.Join(root, "go.mod"), "module example.com/shared\n\ngo 1.23\n")
+	target, caller := filepath.Join(root, "target.go"), filepath.Join(root, "caller.go")
+	putFile(t, target, "package shared\n\nfunc Saved() {}\n")
+	text := "package shared\n\nfunc Caller() { SharedTarget() }\n"
+	putFile(t, caller, text)
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+	first, err := newSession(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.close()
+	second, err := newSession(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.close()
+	type serverState struct {
+		Clients []struct {
+			SessionID string `json:"sessionID"`
+		} `json:"clients"`
+	}
+	// The public inspector connects directly to the daemon. Its own connection
+	// is the third client, alongside the two independently initialized editors.
+	inspect := exec.CommandContext(ctx, os.Getenv("TERN_TEST_GOPLS"), "-remote=auto", "remote", "sessions")
+	inspect.Dir, inspect.Env = root, first.env
+	output, err := inspect.Output()
+	if err != nil {
+		t.Fatalf("inspect shared gopls: %v", err)
+	}
+	var shared serverState
+	if err := json.Unmarshal(output, &shared); err != nil {
+		t.Fatal(err)
+	}
+	if len(shared.Clients) != 3 {
+		t.Fatalf("expected two editors and the inspector on one daemon: %+v", shared)
+	}
+	q := query{Path: caller, Line: 3, Col: 17, TabWidth: 4}
+	pos := position{Line: 2, Character: 16}
+	check := func(s *session, line int) {
+		t.Helper()
+		q.Documents = map[string]string{
+			target: "package shared\n" + strings.Repeat("\n", line-2) + "func SharedTarget() {}\n",
+			caller: text,
+		}
+		got, err := s.navigate(ctx, q, pos)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectDestinations(t, got, map[string]destination{
+			target: {Line: line, Col: 6, Kind: "definition"},
+			caller: {Line: 3, Col: 17, Kind: "reference"},
+		})
+	}
+	check(first, 3)
+	check(second, 5)
+	check(first, 3)
+	second.close()
+	check(first, 3)
+	if data, err := os.ReadFile(target); err != nil || string(data) != "package shared\n\nfunc Saved() {}\n" {
+		t.Fatalf("shared sessions changed saved source: %q, %v", data, err)
+	}
+}

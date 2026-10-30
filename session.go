@@ -62,7 +62,9 @@ func newSession(ctx context.Context, root string) (_ *session, err error) {
 			gopls = filepath.Join(home, "go", "bin", "gopls")
 		}
 	}
-	s.cmd = exec.Command(gopls, "serve")
+	// Each forwarder gets an isolated LSP session in the shared daemon. Killing
+	// this client must not terminate the language service used by OMP.
+	s.cmd = exec.Command(gopls, "-remote=auto", "serve")
 	s.cmd.Dir, s.cmd.Env, s.cmd.Stderr = root, s.env, &s.stderr
 	s.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	s.cmd.WaitDelay = time.Second
