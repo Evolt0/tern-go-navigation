@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Validate and exercise a release archive on a darwin-arm64 host (Python 3.9+)."""
+"""Validate a release archive and exercise it on a matching native host (Python 3.9+)."""
 
 import argparse
 import json
 import os
 from pathlib import Path, PurePosixPath
-import platform
 import re
 import shutil
 import subprocess
@@ -13,7 +12,8 @@ import tarfile
 import tempfile
 import uuid
 
-from package import BINARY, PLUGIN_ID, REQUIRED_FILES, archive_name, manifest_version, sha256
+from package import (BINARY, PLUGIN_ID, REQUIRED_FILES, TARGETS, archive_name,
+                     manifest_version, native_target, sha256)
 
 
 def require(condition, message):
@@ -21,7 +21,32 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def archive_target(path):
+    for target in TARGETS:
+        if path.name.endswith("-" + target + ".tar.gz"):
+            return target
+    raise ValueError("archive filename must identify a supported release target")
+
+
+def validate_binary_header(header, target):
+    system, architecture = target.split("-")
+    if system == "darwin":
+        cpu = {"arm64": 0x0100000C, "amd64": 0x01000007}[architecture]
+        require(len(header) >= 32 and header[:4] == b"\xcf\xfa\xed\xfe" and
+                int.from_bytes(header[4:8], "little") == cpu and
+                int.from_bytes(header[12:16], "little") == 2,
+                "packaged binary is not a 64-bit " + architecture + " Mach-O executable")
+    else:
+        machine = {"arm64": 183, "amd64": 62}[architecture]
+        require(len(header) >= 32 and header[:4] == b"\x7fELF" and
+                header[4:7] == b"\x02\x01\x01" and
+                int.from_bytes(header[16:18], "little") in (2, 3) and
+                int.from_bytes(header[18:20], "little") == machine,
+                "packaged binary is not a little-endian 64-bit " + architecture + " ELF executable")
+
+
 def validate_and_extract(path, destination):
+    target = archive_target(path)
     checksum = path.with_name(path.name + ".sha256").read_text(encoding="ascii")
     require(re.fullmatch(r"[0-9a-f]{64}  " + re.escape(path.name) + r"\n", checksum) is not None,
             "checksum must contain one SHA-256 digest and the archive basename only")
@@ -71,7 +96,7 @@ def validate_and_extract(path, destination):
                 return source.read().decode("utf-8")
 
         version = manifest_version(text("plugin.toml"))
-        require(path.name == archive_name(version), "archive name does not match the packaged manifest")
+        require(path.name == archive_name(version, target), "archive name does not match the packaged manifest")
         notices = text("THIRD_PARTY_NOTICES.txt")
         license_paths = re.findall(r"^License: (.+)$", notices, re.MULTILINE)
         require("licenses/Go/LICENSE" in license_paths, "missing Go runtime license notice")
@@ -82,8 +107,7 @@ def validate_and_extract(path, destination):
             require(relative.startswith("licenses/") and relative in files,
                     "notice references missing license content: " + relative)
         with archive.extractfile(members[PLUGIN_ID + "/" + BINARY]) as binary:
-            require(binary.read(8) == b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01",
-                    "packaged binary is not a 64-bit arm64 Mach-O executable")
+            validate_binary_header(binary.read(32), target)
         # All paths/types have been checked; copying regular files explicitly
         # avoids tar extraction behavior differences between Python versions.
         for name, member in sorted(members.items()):
@@ -183,13 +207,15 @@ def smoke(binary, project):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("archive", type=Path, help="go-navigation-X.Y.Z-darwin-arm64.tar.gz")
+    parser.add_argument("archive", type=Path, help="go-navigation-X.Y.Z-<os>-<arch>.tar.gz")
     args = parser.parse_args()
-    require(platform.system() == "Darwin" and platform.machine() == "arm64",
-            "the packaged release smoke requires a darwin-arm64 host")
     with tempfile.TemporaryDirectory(prefix="go-navigation-smoke-") as temporary:
         root = Path(temporary).resolve()
         binary = validate_and_extract(args.archive.resolve(), root)
+        target = archive_target(args.archive)
+        host = native_target()
+        require(target == host,
+                "cannot execute " + target + " release on " + host + "; smoke requires a matching native host")
         smoke(binary, root / "project")
     print("Release smoke passed: archive, checksum, unsaved combined navigation, and project symbols")
 

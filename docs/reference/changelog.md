@@ -11,7 +11,7 @@
 - README 增加项目查询截图、缓存生命周期说明及 VS Code / Zed / gopls 参考；克隆地址改为 `git@github.com:Evolt0/tern-go-navigation.git`。
 - `go test -race ./...` 通过；真实桌面验证自动预热、未打开文件查询、未保存改名、返回和标准库排除，并确认同一 gopls 进程复用。另验证编辑器退出和二进制替换会自动回收旧服务。
 - README 主页改为英文，新增完整中文 README 和语言切换；统一使用新仓库名与 Git SSH 克隆地址。
-- 新增版本标签触发的 GitHub Releases 工作流：版本校验、竞态测试、macOS arm64 打包、SHA-256 校验及发布包 CLI 冒烟检查；手动运行仅生成构建产物。
+- 新增版本标签触发的 GitHub Releases 工作流：版本校验、竞态测试、macOS / Linux 的 arm64 / amd64 原生打包、SHA-256 校验及真实 gopls 发布包 CLI 冒烟检查；手动运行默认仅生成构建产物，指定已有 `release_tag` 可补充缺失平台附件，不改写已发布标签或覆盖已有附件。
 - 发布包包含可执行后端、中英文文档、截图、变更记录与实际编译依赖的许可证；Go 和 gopls 仍为运行时要求。
 
 ## 1.2.1 — 2026-10-29

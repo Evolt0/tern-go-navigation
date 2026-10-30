@@ -5,44 +5,68 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to backfill missing assets; blank builds only
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
-    name: Build and smoke darwin-arm64
-    runs-on: macos-15
+    name: Build and smoke ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-15
+          - target: darwin-amd64
+            runner: macos-15-intel
+          - target: linux-amd64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
-    outputs:
-      archive: ${{ steps.metadata.outputs.archive }}
+    env:
+      TARGET: ${{ matrix.target }}
+      RELEASE_TAG: ${{ inputs.release_tag || (github.event_name == 'push' && github.ref_name) || '' }}
     steps:
-      - name: Check out source
+      - name: Check out release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
+          ref: ${{ inputs.release_tag || github.sha }}
+          persist-credentials: false
+
       - name: Validate manifest and release tag
         id: metadata
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if [ "$EVENT_NAME" = push ]; then
-            python3 scripts/package.py --check-tag "$RELEASE_TAG"
+          if [ -n "$RELEASE_TAG" ]; then
+            python3 scripts/package.py --source source --check-tag "$RELEASE_TAG"
           fi
           python3 - <<'PY'
           import os
+          from pathlib import Path
           import sys
           sys.path.insert(0, "scripts")
-          from package import ROOT, archive_name, manifest_version
-          version = manifest_version((ROOT / "plugin.toml").read_text(encoding="utf-8"))
+          from package import archive_name, manifest_version
+          version = manifest_version(Path("source/plugin.toml").read_text(encoding="utf-8"))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write("archive=" + archive_name(version) + "\n")
+              output.write("archive=" + archive_name(version, os.environ["TARGET"]) + "\n")
           PY
 
       - name: Set up stable Go
@@ -57,17 +81,15 @@ jobs:
           echo "GOPLS=$RUNNER_TEMP/gopls-bin/gopls" >> "$GITHUB_ENV"
 
       - name: Run race-enabled tests
+        working-directory: source
         run: go test -race ./...
 
       - name: Package release
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if [ "$EVENT_NAME" = push ]; then
-            python3 scripts/package.py --output dist --tag "$RELEASE_TAG"
+          if [ -n "$RELEASE_TAG" ]; then
+            python3 scripts/package.py --source source --target "$TARGET" --output dist --tag "$RELEASE_TAG"
           else
-            python3 scripts/package.py --output dist
+            python3 scripts/package.py --source source --target "$TARGET" --output dist
           fi
 
       - name: Smoke the packaged executable
@@ -78,7 +100,7 @@ jobs:
       - name: Upload archive and checksum
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: go-navigation-darwin-arm64
+          name: go-navigation-${{ matrix.target }}
           path: |
             dist/${{ steps.metadata.outputs.archive }}
             dist/${{ steps.metadata.outputs.archive }}.sha256
@@ -86,28 +108,49 @@ jobs:
           compression-level: 0
 
   publish:
-    name: Publish tagged release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    name: Publish release assets
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - name: Download verified build artifact
+      - name: Download verified build artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: go-navigation-darwin-arm64
+          pattern: go-navigation-*
+          merge-multiple: true
           path: dist
 
-      - name: Verify checksum and create release
+      - name: Verify checksums and publish assets
         working-directory: dist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
-          ARCHIVE: ${{ needs.build.outputs.archive }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
-          sha256sum -c "$ARCHIVE.sha256"
-          gh release create "$RELEASE_TAG" "$ARCHIVE" "$ARCHIVE.sha256" \
-            --verify-tag --generate-notes
+          sha256sum -c *.sha256
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          tag = os.environ["RELEASE_TAG"]
+          assets = sorted(path.name for path in Path(".").iterdir() if path.is_file())
+          if os.environ["EVENT_NAME"] == "push":
+              subprocess.run(
+                  ["gh", "release", "create", tag, *assets, "--verify-tag", "--generate-notes"],
+                  check=True,
+              )
+          else:
+              release = json.loads(subprocess.check_output(
+                  ["gh", "release", "view", tag, "--json", "assets"], text=True,
+              ))
+              existing = {asset["name"] for asset in release["assets"]}
+              missing = [asset for asset in assets if asset not in existing]
+              if missing:
+                  subprocess.run(["gh", "release", "upload", tag, *missing], check=True)
+          PY

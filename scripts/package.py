@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the darwin-arm64 release using Python 3.9+ and the Go toolchain."""
+"""Build a native or cross-platform release using Python 3.9+ and Go."""
 
 import argparse
 import gzip
@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
@@ -14,9 +15,8 @@ import tarfile
 import tempfile
 
 
-ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_ID = "go-navigation"
-TARGET = "darwin-arm64"
+TARGETS = ("darwin-arm64", "darwin-amd64", "linux-amd64", "linux-arm64")
 VERSION_PATTERN = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 BINARY = "bin/tern-go-navigation"
 REQUIRED_FILES = (
@@ -50,8 +50,20 @@ def manifest_version(text):
     return values["version"]
 
 
-def archive_name(version):
-    return "{}-{}-{}.tar.gz".format(PLUGIN_ID, version, TARGET)
+def native_target():
+    system = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system())
+    machine = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64",
+               "AMD64": "amd64"}.get(platform.machine())
+    target = "{}-{}".format(system, machine)
+    if target not in TARGETS:
+        raise ValueError("unsupported native platform: {} {}".format(platform.system(), platform.machine()))
+    return target
+
+
+def archive_name(version, target):
+    if target not in TARGETS:
+        raise ValueError("unsupported release target: " + target)
+    return "{}-{}-{}.tar.gz".format(PLUGIN_ID, version, target)
 
 
 def sha256(path):
@@ -62,8 +74,8 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def go_output(args, env):
-    return subprocess.check_output(["go"] + args, cwd=ROOT, env=env, text=True).strip()
+def go_output(args, env, root):
+    return subprocess.check_output(["go"] + args, cwd=root, env=env, text=True).strip()
 
 
 def json_objects(text):
@@ -82,9 +94,9 @@ def copy_file(source, destination):
     shutil.copyfile(source, destination)
 
 
-def add_licenses(stage, env):
-    goroot = Path(go_output(["env", "GOROOT"], env))
-    toolchain = go_output(["version"], env)
+def add_licenses(stage, env, root):
+    goroot = Path(go_output(["env", "GOROOT"], env, root))
+    toolchain = go_output(["version"], env, root)
     license_file = goroot / "LICENSE"
     # Homebrew keeps the Go license beside libexec, not inside GOROOT.
     if not license_file.is_file() and goroot.name == "libexec":
@@ -100,9 +112,9 @@ def add_licenses(stage, env):
     module_paths = sorted(set(go_output([
         "list", "-mod=readonly", "-deps", "-f",
         "{{if .Module}}{{if not .Module.Main}}{{.Module.Path}}{{end}}{{end}}", ".",
-    ], env).split()))
+    ], env, root).split()))
     if module_paths:
-        modules = json_objects(go_output(["list", "-mod=readonly", "-m", "-json"] + module_paths, env))
+        modules = json_objects(go_output(["list", "-mod=readonly", "-m", "-json"] + module_paths, env, root))
         for module in modules:
             if module.get("Replace"):
                 raise ValueError("release dependencies must not use replace: " + module["Path"])
@@ -151,8 +163,10 @@ def write_archive(stage, destination):
                             archive.addfile(info, source)
 
 
-def package(output, version):
-    env = dict(os.environ, CGO_ENABLED="0", GOOS="darwin", GOARCH="arm64",
+def package(output, version, target, root):
+    archive_name(version, target)
+    goos, goarch = target.split("-")
+    env = dict(os.environ, CGO_ENABLED="0", GOOS=goos, GOARCH=goarch,
                GOWORK="off", GOFLAGS="", GOTOOLCHAIN="local")
     output.mkdir(parents=True, exist_ok=True)
     # Keep temporary outputs on the destination filesystem for atomic replace.
@@ -161,12 +175,12 @@ def package(output, version):
         stage = temporary / PLUGIN_ID
         stage.mkdir()
         for relative in REQUIRED_FILES:
-            copy_file(ROOT / relative, stage / relative)
-        assets = ROOT / "assets"
+            copy_file(root / relative, stage / relative)
+        assets = root / "assets"
         if assets.is_symlink() or not assets.is_dir():
             raise ValueError("assets must be a real directory")
         for source in sorted(assets.rglob("*")):
-            relative = source.relative_to(ROOT)
+            relative = source.relative_to(root)
             if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
                 continue
             if source.is_symlink():
@@ -179,10 +193,10 @@ def package(output, version):
         binary.parent.mkdir()
         subprocess.run([
             "go", "build", "-mod=readonly", "-trimpath", "-buildvcs=false", "-o", str(binary), ".",
-        ], cwd=ROOT, env=env, check=True)
+        ], cwd=root, env=env, check=True)
         binary.chmod(0o755)
-        add_licenses(stage, env)
-        name = archive_name(version)
+        add_licenses(stage, env, root)
+        name = archive_name(version, target)
         archive = temporary / name
         write_archive(stage, archive)
         checksum = temporary / (name + ".sha256")
@@ -196,18 +210,22 @@ def package(output, version):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("dist"), help="output directory (default: dist)")
+    parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parent.parent,
+                        help="source tree to package (default: tool root)")
+    parser.add_argument("--target", choices=TARGETS, help="release target (default: native host)")
     tags = parser.add_mutually_exclusive_group()
     tags.add_argument("--tag", help="require the tag to equal v<plugin.toml version> before packaging")
     tags.add_argument("--check-tag", help="validate this tag without building or writing output")
     args = parser.parse_args()
-    version = manifest_version((ROOT / "plugin.toml").read_text(encoding="utf-8"))
+    root = args.source.resolve()
+    version = manifest_version((root / "plugin.toml").read_text(encoding="utf-8"))
     tag = args.tag if args.tag is not None else args.check_tag
     if tag is not None and tag != "v" + version:
         parser.error("tag must equal v" + version + " from plugin.toml")
     if args.check_tag is not None:
         print("Validated " + tag)
         return
-    package(args.output.resolve(), version)
+    package(args.output.resolve(), version, args.target or native_target(), root)
 
 
 if __name__ == "__main__":

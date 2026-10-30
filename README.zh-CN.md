@@ -28,7 +28,7 @@
 - **Git** 仅在克隆和更新源码时需要；SSH 克隆要求已经配置 GitHub SSH 访问。
 - **Python 3.9 或更新版本**仅供维护者打包和运行发布包冒烟检查，普通用户运行插件或从源码构建 Go 后端不需要 Python。
 
-已验证平台为 **macOS Apple Silicon（arm64）**，发布包也只提供 `darwin-arm64`。Linux、Intel Mac 和其他 Unix 平台尚未验证；当前后端依赖 Unix socket 和进程信号，不支持 Windows。发布二进制未经 Apple 公证；本文不提供绕过系统安全机制的操作，如无法使用发布包，可选择从源码构建。
+发布包提供 **macOS arm64、macOS amd64、Linux amd64、Linux arm64**。`amd64` 即 x86-64，同时适用于 Intel 和 AMD 处理器。CI 在各平台的原生 runner 上运行后端测试与发布包 CLI 冒烟检查；Tern 桌面集成已在 macOS arm64 验证。当前后端依赖 Unix socket 和进程信号，不支持 Windows。macOS 发布二进制未经 Apple 公证；无法使用发布包时可选择从源码构建。
 
 先安装运行时语言服务：
 
@@ -40,14 +40,27 @@ go install golang.org/x/tools/gopls@v0.21.1
 
 ### 预编译 Release 安装
 
-发布入口：[GitHub Releases](https://github.com/Evolt0/tern-go-navigation/releases)。发布包由版本标签工作流生成；若还没有可用版本，请使用下方源码安装。
+发布入口：[GitHub Releases](https://github.com/Evolt0/tern-go-navigation/releases)。按系统和处理器选择附件：
 
-以下以 `1.3.0` 为例。从 Releases 下载 `go-navigation-1.3.0-darwin-arm64.tar.gz` 及相邻的 `go-navigation-1.3.0-darwin-arm64.tar.gz.sha256`，放入同一目录后执行；版本和文件名以页面的实际附件为准：
+| 系统 | 处理器 | target |
+| --- | --- | --- |
+| macOS | Apple Silicon | `darwin-arm64` |
+| macOS | Intel | `darwin-amd64` |
+| Linux | Intel / AMD x86-64 | `linux-amd64` |
+| Linux | ARM64 / AArch64 | `linux-arm64` |
+
+以下以 `1.3.0` 为例。下载 `go-navigation-1.3.0-<target>.tar.gz` 及相邻的 `.tar.gz.sha256`，放入同一目录后执行：
 
 ```sh
-shasum -a 256 -c go-navigation-1.3.0-darwin-arm64.tar.gz.sha256
-tar -xzf go-navigation-1.3.0-darwin-arm64.tar.gz
-tern plugin install ./go-navigation
+target=darwin-arm64 # 按上表替换为你的平台。
+archive="go-navigation-1.3.0-${target}.tar.gz"
+if [ "$(uname -s)" = Darwin ]; then
+  shasum -a 256 -c "$archive.sha256"
+else
+  sha256sum -c "$archive.sha256"
+fi &&
+tar -xzf "$archive" &&
+tern plugin install ./go-navigation &&
 tern plugin list
 ```
 
@@ -82,12 +95,18 @@ Git 默认克隆到同名的 `tern-go-navigation` 目录，不需要额外指定
 
 ### 更新复制安装的发布包
 
-从 Releases 下载目标版本的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.3.0` 为例，升级时须将文件名和下载标签一起换为目标版本：
+从 Releases 下载目标平台的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.3.0` 为例，升级时须将版本和 target 换为目标附件：
 
 ```sh
-shasum -a 256 -c go-navigation-1.3.0-darwin-arm64.tar.gz.sha256
-tar -xzf go-navigation-1.3.0-darwin-arm64.tar.gz
-tern plugin install ./go-navigation --force
+target=darwin-arm64 # 按你的系统和处理器选择。
+archive="go-navigation-1.3.0-${target}.tar.gz"
+if [ "$(uname -s)" = Darwin ]; then
+  shasum -a 256 -c "$archive.sha256"
+else
+  sha256sum -c "$archive.sha256"
+fi &&
+tar -xzf "$archive" &&
+tern plugin install ./go-navigation --force &&
 tern plugin reload go-navigation
 ```
 
@@ -212,14 +231,14 @@ tern plugin reload go-navigation
 
 ### 本地打包与冒烟检查
 
-维护者需要 Python 3.9+（仅标准库，不依赖 Python 3.11 的 `tomllib`），并在 macOS arm64 上使用 Go 和 gopls：
+维护者需要 Python 3.9+（仅标准库，不依赖 Python 3.11 的 `tomllib`）、Go 和 gopls。默认构建本机平台，也可用 `--target` 指定上表中的任意平台；冒烟检查必须在与归档系统和架构一致的主机上执行：
 
 ```sh
-python3 scripts/package.py --output dist
+python3 scripts/package.py --target darwin-arm64 --output dist
 python3 scripts/smoke_release.py dist/go-navigation-1.3.0-darwin-arm64.tar.gz
 ```
 
-`--output` 默认为 `dist`。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查使用实际归档中的 CLI，而不是工作目录中的二进制。可通过 `--tag v1.3.0` 在打包时校验标签，或只校验而不打包：
+`--output` 默认为 `dist`，`--source PATH` 可选择单独的源码 checkout，默认使用本仓库。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查验证实际二进制格式与架构，并运行归档中的 CLI。可通过 `--tag v1.3.0` 校验版本，或只校验而不打包：
 
 ```sh
 python3 scripts/package.py --check-tag v1.3.0
@@ -229,20 +248,16 @@ python3 scripts/package.py --check-tag v1.3.0
 
 [发布工作流](https://github.com/Evolt0/tern-go-navigation/blob/main/.github/workflows/release.yml)在 `v*` 标签推送或手动 `workflow_dispatch` 时运行：
 
-- 构建任务使用 GitHub 的 ARM `macos-15` runner、稳定版 Go 和 `gopls@v0.21.1`，执行 `go test -race ./...`、打包、实际发布包 CLI 冒烟检查，然后上传 Actions artifact。官方 Actions 固定到提交 SHA。
-- **手动触发只构建和检查**，产物在相应 Actions 运行页面下载，不创建 GitHub Release。
-- **只有标签推送**在构建成功后才运行独立 Ubuntu 发布任务；仅该任务授予 `GITHUB_TOKEN` 的 `contents: write` 权限，通过 `GH_REPO=github.repository` 选择仓库，使用 `gh release create --verify-tag --generate-notes` 创建 Release，不覆盖已存在的 Release，不需要自定义 secrets。
-- 稳定版本标签使用 `vX.Y.Z`，必须严格等于 `v` 加 `plugin.toml` 的版本。不要移动或复用已发布的标签；修正已发布内容应发布新版本。
-
-维护者应先更新 `plugin.toml` 和[变更记录](docs/reference/changelog.md)，同步文档中的版本示例，提交所有发布改动（包括工作流和脚本），再推送 `main` 并创建相匹配的标签。提交完成后，以 `1.3.0` 为例：
+- 构建矩阵使用 macOS arm64、macOS amd64、Linux amd64、Linux arm64 的原生 runner、稳定版 Go 和 `gopls@v0.21.1`，分别执行 `go test -race ./...`、打包和实际 CLI 冒烟检查，再上传各平台 Actions artifact。官方 Actions 固定到提交 SHA。
+- 手动触发时，`release_tag` 留空只构建和检查，不创建 Release。
+- 推送 `vX.Y.Z` 标签时，四个平台全部通过后，独立发布任务创建 Release 并上传归档与校验文件。标签必须严格等于 `v` 加 `plugin.toml` 的版本。仅发布任务拥有 `contents: write`，不需要自定义 secrets。
+- 为已有 Release 补充缺失平台时，在 `main` 上手动运行并填写 `release_tag`。使用该标签的源码和当前打包工具，原生验证四个平台后只上传不存在的附件；保留原标签、Release 说明和已有附件。
 
 ```sh
-git push origin main
-git tag -a v1.3.0 -m "Release v1.3.0"
-git push origin v1.3.0
+gh workflow run release.yml --ref main -f release_tag=v1.3.0
 ```
 
-标签指向的提交必须包含完整的工作流、脚本和发布内容。不要移动或复用已发布标签；修复发布问题时更新版本号并创建新标签。
+新版本应先更新 `plugin.toml`、[变更记录](docs/reference/changelog.md)和文档示例，提交并推送所有改动，再创建并推送相匹配的版本标签。不要移动或复用已发布标签；修复运行时行为应发布新版本。
 
 ## 变更记录
 

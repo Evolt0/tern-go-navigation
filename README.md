@@ -28,25 +28,36 @@ Navigate Go code inside **Tern's native editor**. Find definitions and reference
 - **The Go toolchain and gopls**, even when using a prebuilt release. gopls needs Go to load and analyze your project. The examples use the tested gopls version `v0.21.1`.
 - **Git and GitHub SSH access** only if installing from source.
 
-Release packages currently target **macOS Apple Silicon (`darwin-arm64`)**. Other Unix platforms have not been validated; Windows is not supported by the current Unix-socket/process implementation.
+Release packages cover **macOS (`darwin-arm64`, `darwin-amd64`)** and **Linux (`linux-amd64`, `linux-arm64`)**. `amd64` means x86-64 and works on both Intel and AMD CPUs. CI runs the backend tests and packaged CLI on native runners for each target; Tern desktop integration has been checked on macOS arm64. Windows is not supported by the current Unix-socket/process implementation.
 
 The plugin source requires Go 1.23 or newer. Installing gopls may download a newer toolchain automatically according to gopls's requirements. Local verification used Go 1.27.3.
 
 ### Release package — prebuilt plugin backend
 
-Download the versioned **`go-navigation-<version>-darwin-arm64.tar.gz`** and its **`.tar.gz.sha256`** checksum from [Releases](https://github.com/Evolt0/tern-go-navigation/releases). Use these named assets, not GitHub's automatically generated “Source code” archives.
+Download **`go-navigation-<version>-<target>.tar.gz`** and its **`.tar.gz.sha256`** checksum from [Releases](https://github.com/Evolt0/tern-go-navigation/releases). Choose your target below. Use these named assets, not GitHub's automatically generated “Source code” archives.
 
-If no release is available yet, use the source installation below. Release assets are created by the version-tag workflow described under [Publishing releases](#publishing-releases).
+| System | CPU | Target |
+| --- | --- | --- |
+| macOS | Apple Silicon | `darwin-arm64` |
+| macOS | Intel | `darwin-amd64` |
+| Linux | Intel / AMD x86-64 | `linux-amd64` |
+| Linux | ARM64 / AArch64 | `linux-arm64` |
 
-For version `1.3.0`, run these commands in the download directory:
+For version `1.3.0`, choose the target from the table and run these commands in the download directory:
 
 ```sh
 # Still required for semantic Go navigation:
 go install golang.org/x/tools/gopls@v0.21.1
 
-shasum -a 256 -c go-navigation-1.3.0-darwin-arm64.tar.gz.sha256
-tar -xzf go-navigation-1.3.0-darwin-arm64.tar.gz
-tern plugin install ./go-navigation
+target=darwin-arm64 # Replace with your target from the table.
+archive="go-navigation-1.3.0-${target}.tar.gz"
+if [ "$(uname -s)" = Darwin ]; then
+  shasum -a 256 -c "$archive.sha256"
+else
+  sha256sum -c "$archive.sha256"
+fi &&
+tar -xzf "$archive" &&
+tern plugin install ./go-navigation &&
 tern plugin list
 ```
 
@@ -207,29 +218,31 @@ Real Tern desktop verification covers the combined picker, previews, jumps, hist
 On a pushed `vX.Y.Z` tag, it:
 
 1. Requires the tag version to match `plugin.toml`.
-2. Uses a native macOS arm64 runner, installs Go and the pinned gopls, and runs the race-enabled tests.
+2. Uses native macOS arm64, macOS amd64, Linux amd64, and Linux arm64 runners, installs Go and the pinned gopls, and runs the race-enabled tests on each.
 3. Builds a fresh plugin backend, packages the runtime files and documentation, and generates a SHA-256 checksum.
 4. Extracts the package and exercises the packaged binary against a real temporary Go project.
-5. Publishes the archive and checksum to GitHub Releases after those checks succeed.
+5. Publishes all four archives and their checksums to GitHub Releases after every target succeeds.
 
-Only the publishing job receives `contents: write`; it uses GitHub's built-in token, so no personal access token is required. Manual **Run workflow** executions build downloadable Actions artifacts but **do not publish a Release**. Enable Actions in the repository if it is disabled.
+Only the publishing job receives `contents: write`; it uses GitHub's built-in token, so no personal access token is required. Manual **Run workflow** executions with an empty `release_tag` build downloadable Actions artifacts without publishing. Enable Actions in the repository if it is disabled.
 
-For the current `1.3.0` version, after committing the workflow, version, and changelog changes:
+For a new release, update `plugin.toml` and the changelog, commit and push those changes, then push a matching `vX.Y.Z` tag. Do not move or reuse a published tag.
+
+To add missing platform assets to an existing release, run the updated workflow on `main` with that release tag:
 
 ```sh
-git push origin main
-git tag -a v1.3.0 -m "Release v1.3.0"
-git push origin v1.3.0
+gh workflow run release.yml --ref main -f release_tag=v1.3.0
 ```
 
-For later releases, update `plugin.toml` and the changelog first, then tag that commit with the matching version. Do not move or reuse a published tag. The workflow does not overwrite an existing Release; publish a new version for corrections.
+This uses the selected tag's source with the current packaging tools, checks all four native targets, and uploads only absent asset names. Existing tags, release notes, and assets are preserved. Runtime corrections require a new version.
 
-For local packaging, maintainers need **Go and Python 3.9+**; smoke verification also needs gopls and a macOS arm64 host:
+For local packaging, maintainers need **Go and Python 3.9+**; smoke verification also needs gopls and a host matching the archive target:
 
 ```sh
-python3 scripts/package.py --output dist
+python3 scripts/package.py --target darwin-arm64 --output dist
 python3 scripts/smoke_release.py dist/go-navigation-1.3.0-darwin-arm64.tar.gz
 ```
+
+`--target` defaults to the native platform and accepts the four targets listed above. Cross-compilation is supported; executing the smoke requires the matching OS and architecture. `--source PATH` selects a separate source checkout; the default is this repository.
 
 Consumers of the prebuilt package do not need Python or the plugin source. They still need Go and gopls at runtime.
 
