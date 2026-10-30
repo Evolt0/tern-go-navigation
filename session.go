@@ -19,15 +19,16 @@ type overlay struct {
 }
 
 type session struct {
-	root      string
-	env       []string
-	cmd       *exec.Cmd
-	stdin     io.WriteCloser
-	rpc       *rpc
-	watcher   *fileWatcher
-	documents map[string]overlay
-	closeOnce sync.Once
-	stderr    boundedLog
+	root         string
+	projectRoots []string
+	env          []string
+	cmd          *exec.Cmd
+	stdin        io.WriteCloser
+	rpc          *rpc
+	watcher      *fileWatcher
+	documents    map[string]overlay
+	closeOnce    sync.Once
+	stderr       boundedLog
 }
 
 func newSession(ctx context.Context, root string) (_ *session, err error) {
@@ -49,6 +50,7 @@ func newSession(ctx context.Context, root string) (_ *session, err error) {
 	if err := s.watcher.discover(ctx, root, s.env); err != nil {
 		return nil, err
 	}
+	s.projectRoots = s.watcher.projectRoots
 	gopls := os.Getenv("GOPLS")
 	if gopls == "" {
 		gopls, err = exec.LookPath("gopls")
@@ -88,7 +90,9 @@ func newSession(ctx context.Context, root string) (_ *session, err error) {
 			"general":   map[string]any{"positionEncodings": []string{"utf-16"}},
 			"workspace": map[string]any{"didChangeWatchedFiles": map[string]any{"dynamicRegistration": true, "relativePatternSupport": true}},
 		},
-		"initializationOptions": map[string]any{"diagnosticsDelay": "1h", "checkUpdates": "off"},
+		"initializationOptions": map[string]any{
+			"diagnosticsDelay": "1h", "checkUpdates": "off", "symbolScope": "workspace",
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize gopls: %w", err)
@@ -216,9 +220,28 @@ func (s *session) navigate(ctx context.Context, q query, pos position) (_ []dest
 		if err := s.watcher.discover(ctx, s.root, s.env); err != nil {
 			return nil, err
 		}
+		s.projectRoots = s.watcher.projectRoots
+	}
+	if q.Action == "symbols" {
+		for name := range q.Documents {
+			included, err := projectSymbolDirectory(filepath.Dir(name), s.projectRoots)
+			if err != nil {
+				return nil, err
+			}
+			if !included {
+				delete(q.Documents, name)
+			}
+		}
 	}
 	if err := s.syncDocuments(q.Documents); err != nil {
 		return nil, err
+	}
+	if q.Action == "symbols" {
+		return s.symbols(ctx, q)
+	}
+	if q.Action == "warmup" {
+		_, err := s.rpc.call(ctx, "textDocument/documentSymbol", map[string]any{"textDocument": map[string]any{"uri": fileURI(q.Path)}})
+		return []destination{}, err
 	}
 	params := map[string]any{"textDocument": map[string]any{"uri": fileURI(q.Path)}, "position": pos}
 	out := make([]destination, 0)

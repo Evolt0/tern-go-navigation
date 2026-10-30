@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 
@@ -17,6 +18,8 @@ import (
 )
 
 type query struct {
+	Action    string            `json:"action,omitempty"`
+	Search    string            `json:"search,omitempty"`
 	Path      string            `json:"path"`
 	Line      int               `json:"line"`
 	Col       int               `json:"col"`
@@ -46,6 +49,7 @@ type destination struct {
 	URL     string `json:"url"`
 	Kind    string `json:"kind"`
 	Preview string `json:"preview"`
+	Name    string `json:"name,omitempty"`
 }
 
 func canonical(path string) (string, error) {
@@ -197,6 +201,22 @@ func goEnvironment() ([]string, error) {
 }
 
 func prepareQuery(q query) (query, position, error) {
+	if q.Action == "" {
+		q.Action = "navigate"
+	}
+	switch q.Action {
+	case "navigate", "warmup":
+	case "symbols":
+		q.Search = strings.TrimSpace(q.Search)
+		if q.Search == "" {
+			return q, position{}, errors.New("symbol search must not be empty")
+		}
+	default:
+		return q, position{}, fmt.Errorf("unsupported query action %q", q.Action)
+	}
+	if q.TabWidth < 1 {
+		return q, position{}, errors.New("tab width must be positive")
+	}
 	path, err := canonical(q.Path)
 	if err != nil {
 		return q, position{}, err
@@ -213,8 +233,11 @@ func prepareQuery(q query) (query, position, error) {
 	if !ok {
 		return q, position{}, errors.New("current editor buffer is missing")
 	}
-	pos, err := lspPosition(text, q.Line, q.Col, q.TabWidth)
 	q.Path, q.Documents = path, documents
+	if q.Action != "navigate" {
+		return q, position{}, nil
+	}
+	pos, err := lspPosition(text, q.Line, q.Col, q.TabWidth)
 	return q, pos, err
 }
 
@@ -261,8 +284,13 @@ func destinations(locations []location, kind string, q query, seen map[string]bo
 }
 
 func main() {
-	if len(os.Args) == 3 && os.Args[1] == "--daemon" {
-		if err := serveDaemon(os.Args[2]); err != nil {
+	if len(os.Args) == 4 && os.Args[1] == "--daemon" {
+		ownerPID, err := strconv.Atoi(os.Args[3])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := serveDaemon(os.Args[2], ownerPID); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

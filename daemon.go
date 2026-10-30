@@ -133,7 +133,11 @@ func dialDaemon(ctx context.Context, dir string, start bool) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(executable, "--daemon", dir)
+	ownerPID := 0
+	if _, fromTern := os.LookupEnv("TERN_WINDOW_KEY"); fromTern {
+		ownerPID = os.Getppid()
+	}
+	cmd := exec.Command(executable, "--daemon", dir, strconv.Itoa(ownerPID))
 	cmd.Stdin = nil
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -202,8 +206,26 @@ func daemonQuery(ctx context.Context, q query, shutdown bool) ([]destination, er
 	return response.Destinations, nil
 }
 
-func serveDaemon(dir string) error {
+// Editor-owned sessions retain their in-memory index while the editor lives.
+// Standalone CLI clients still get bounded idle lifetime.
+func helperExpired(ownerPID int, inactive time.Duration) bool {
+	if ownerPID > 1 {
+		err := syscall.Kill(ownerPID, 0)
+		return err != nil && !errors.Is(err, syscall.EPERM)
+	}
+	return inactive >= idleTimeout
+}
+
+func serveDaemon(dir string, ownerPID int) error {
 	if err := privateDir(dir); err != nil {
+		return err
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	version, err := os.Stat(executable)
+	if err != nil {
 		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -246,8 +268,10 @@ func serveDaemon(dir string) error {
 				_ = listener.Close()
 				return
 			case <-timer.C:
+				latest, err := os.Stat(executable)
+				replaced := err != nil || !os.SameFile(version, latest) || version.Size() != latest.Size() || !version.ModTime().Equal(latest.ModTime())
 				activityMu.Lock()
-				idle := active == 0 && time.Since(lastActivity) >= idleTimeout
+				idle := active == 0 && (replaced || helperExpired(ownerPID, time.Since(lastActivity)))
 				activityMu.Unlock()
 				if idle {
 					cancel()
@@ -311,6 +335,14 @@ func serveDaemon(dir string) error {
 				return
 			}
 			q, pos, err := prepareQuery(request.Query)
+			if err != nil {
+				_ = json.NewEncoder(conn).Encode(daemonResponse{Error: err.Error()})
+				return
+			}
+			if q.Action == "warmup" && current != nil {
+				_ = json.NewEncoder(conn).Encode(daemonResponse{Destinations: []destination{}})
+				return
+			}
 			if err == nil {
 				root := workspace(q.Path)
 				if root != request.Workspace {

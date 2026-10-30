@@ -28,6 +28,22 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func TestHelperLifetimeFollowsEditor(t *testing.T) {
+	if helperExpired(os.Getpid(), 2*idleTimeout) {
+		t.Fatal("discarded a live editor's index after an idle interval")
+	}
+	owner := exec.Command("/usr/bin/true")
+	if err := owner.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if !helperExpired(owner.Process.Pid, 0) {
+		t.Fatal("retained an index after its editor exited")
+	}
+	if !helperExpired(0, 2*idleTimeout) {
+		t.Fatal("standalone CLI session lost its idle cleanup")
+	}
+}
+
 func TestUnicodeCoordinates(t *testing.T) {
 	text := "package p\r\n\t/* 中😀é */ target()\r\n"
 	pos, err := lspPosition(text, 2, 17, 4)

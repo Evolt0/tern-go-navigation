@@ -25,18 +25,20 @@ type fileChange struct {
 }
 
 type fileWatcher struct {
-	watcher *fsnotify.Watcher
-	mu      sync.Mutex
-	dirs    map[string]bool
-	files   map[string]bool
-	pending map[string]int
-	err     error
-	done    chan struct{}
-	control string
-	marker  *os.File
-	barrier chan fsnotify.Op
-	ctx     context.Context
-	cancel  context.CancelFunc
+	root         string
+	projectRoots []string
+	watcher      *fsnotify.Watcher
+	mu           sync.Mutex
+	dirs         map[string]bool
+	files        map[string]bool
+	pending      map[string]int
+	err          error
+	done         chan struct{}
+	control      string
+	marker       *os.File
+	barrier      chan fsnotify.Op
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 func newFileWatcher(ctx context.Context, root string) (_ *fileWatcher, err error) {
@@ -56,6 +58,7 @@ func newFileWatcher(ctx context.Context, root string) (_ *fileWatcher, err error
 		return nil, err
 	}
 	f := &fileWatcher{watcher: w, dirs: make(map[string]bool), files: make(map[string]bool), pending: make(map[string]int), done: make(chan struct{}), control: control, barrier: make(chan fsnotify.Op, 16)}
+	f.root = root
 	f.ctx, f.cancel = context.WithCancel(context.Background())
 	f.marker = marker
 	defer func() {
@@ -315,7 +318,7 @@ func (f *fileWatcher) register(raw json.RawMessage) error {
 				pattern = filepath.Join(u.Path, relative.Pattern)
 			}
 			if !filepath.IsAbs(pattern) {
-				return fmt.Errorf("non-absolute watch pattern %q", pattern)
+				pattern = filepath.Join(f.root, pattern)
 			}
 			prefix := pattern
 			if i := strings.IndexAny(prefix, "*?{["); i >= 0 {
@@ -336,10 +339,9 @@ func (f *fileWatcher) register(raw json.RawMessage) error {
 	return nil
 }
 
-// gopls's dynamic registrations cover packages loaded from unsaved imports.
-// Explicit module discovery additionally covers external go.work/use and local
-// replacement modules before their first package is loaded. Downloaded modules
-// are watched by package directory, never by walking all GOMODCACHE or GOROOT.
+// gopls watches active workspace modules, not every imported dependency.
+// Explicit discovery preserves watches for local replacements and loaded
+// dependency packages; it runs only on startup and module configuration changes.
 func (f *fileWatcher) discover(ctx context.Context, root string, env []string) error {
 	type module struct {
 		Dir     string
@@ -365,6 +367,7 @@ func (f *fileWatcher) discover(ctx context.Context, root string, env []string) e
 	// go list can fail for a broken workspace. Let gopls report its richer
 	// workspace error rather than replacing it with a watcher setup error.
 	_ = err
+	projectRoots := make([]string, 0, len(modules))
 	for _, m := range modules {
 		if m.Replace != nil && m.Replace.Version == "" && m.Replace.Dir != "" {
 			if err := f.addContext(ctx, m.Replace.Dir, true, false); err != nil {
@@ -374,6 +377,11 @@ func (f *fileWatcher) discover(ctx context.Context, root string, env []string) e
 		if !m.Main || m.Dir == "" {
 			continue
 		}
+		moduleRoot, err := canonical(m.Dir)
+		if err != nil {
+			return err
+		}
+		projectRoots = append(projectRoots, moduleRoot)
 		if err := f.addContext(ctx, m.Dir, true, false); err != nil {
 			return err
 		}
@@ -396,6 +404,10 @@ func (f *fileWatcher) discover(ctx context.Context, root string, env []string) e
 			return ctx.Err()
 		}
 	}
+	if len(projectRoots) == 0 {
+		projectRoots = []string{root}
+	}
+	f.projectRoots = projectRoots
 	return nil
 }
 
