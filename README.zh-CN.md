@@ -4,6 +4,8 @@
 
 在 Tern **原生 Go 编辑器**中，一次查看符号的定义与调用 / 引用，或按名称搜索当前项目的函数、方法、类型和变量，预览源码后跳转。不替换编辑器，不要求先保存文件。
 
+与更新后的 `java-navigation` 插件同时安装时，`jvm-navigation-host.luau` 会加载它提供的共享原生前端：Go / Java / Kotlin 都使用 **Ctrl+Alt+G / S / B**，共用窗口内的选择器和跳转历史；Go 仍调用本插件后端。两边都需包含共享前端更新，安装、更新或移除任一插件后执行 `tern plugin reload`。不改写全局键位配置；未安装 Java / Kotlin 插件时行为不变。
+
 ![Tern 原生选择器：定义与调用分组，文件行列和命中行代码预览](assets/navigation-preview.png)
 
 ![选择定义后跳转到 Go 源文件，光标定位到函数声明](assets/definition-jump.png)
@@ -49,11 +51,11 @@ go install golang.org/x/tools/gopls@v0.21.1
 | Linux | Intel / AMD x86-64 | `linux-amd64` |
 | Linux | ARM64 / AArch64 | `linux-arm64` |
 
-以下以 `1.3.1` 为例。下载 `go-navigation-1.3.1-<target>.tar.gz` 及相邻的 `.tar.gz.sha256`，放入同一目录后执行：
+以下以 `1.3.2` 为例。下载 `go-navigation-1.3.2-<target>.tar.gz` 及相邻的 `.tar.gz.sha256`，放入同一目录后执行：
 
 ```sh
 target=darwin-arm64 # 按上表替换为你的平台。
-archive="go-navigation-1.3.1-${target}.tar.gz"
+archive="go-navigation-1.3.2-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -95,11 +97,11 @@ Git 默认克隆到同名的 `tern-go-navigation` 目录，不需要额外指定
 
 ### 更新复制安装的发布包
 
-从 Releases 下载目标平台的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.3.1` 为例，升级时须将版本和 target 换为目标附件：
+从 Releases 下载目标平台的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.3.2` 为例，升级时须将版本和 target 换为目标附件：
 
 ```sh
 target=darwin-arm64 # 按你的系统和处理器选择。
-archive="go-navigation-1.3.1-${target}.tar.gz"
+archive="go-navigation-1.3.2-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -199,6 +201,9 @@ tern plugin unlink go-navigation
 
 活动监视器中仍可能出现多个 `gopls`：共享 daemon、轻量转发客户端及 Go telemetry 辅助进程。各客户端的工作区视图仍独立，实际内存收益取决于可共享缓存的比例。从 `v1.3.1` 起发布包包含此模式，OMP 需采用上面的配置才能参与共享。
 
+`v1.3.2` 恢复 gopls 默认诊断调度，并在断开前完成 LSP 会话关闭。此前的一小时诊断延迟可能在关闭时继续持有快照，阻止 daemon 进入空闲退出。从 `v1.3.1` 升级后，需要重启旧共享服务一次，清掉已排队的延迟任务，再重载 OMP 的 LSP、重新发起导航。只关闭项目 tab 时，插件仍按 Tern 进程生命周期保留会话。
+
+
 
 ## 工具链查找与排障
 
@@ -255,13 +260,13 @@ tern plugin reload go-navigation
 
 ```sh
 python3 scripts/package.py --target darwin-arm64 --output dist
-python3 scripts/smoke_release.py dist/go-navigation-1.3.1-darwin-arm64.tar.gz
+python3 scripts/smoke_release.py dist/go-navigation-1.3.2-darwin-arm64.tar.gz
 ```
 
-`--output` 默认为 `dist`，`--source PATH` 可选择单独的源码 checkout，默认使用本仓库。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查验证实际二进制格式与架构，并运行归档中的 CLI。可通过 `--tag v1.3.1` 校验版本，或只校验而不打包：
+`--output` 默认为 `dist`，`--source PATH` 可选择单独的源码 checkout，默认使用本仓库。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查验证实际二进制格式与架构，并运行归档中的 CLI。可通过 `--tag v1.3.2` 校验版本，或只校验而不打包：
 
 ```sh
-python3 scripts/package.py --check-tag v1.3.1
+python3 scripts/package.py --check-tag v1.3.2
 ```
 
 ### 发布流程

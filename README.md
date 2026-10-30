@@ -4,6 +4,8 @@
 
 Navigate Go code inside **Tern's native editor**. Find definitions and references together, search your project for functions and other symbols, preview the matching source line, and jump to the exact location. No replacement editor and no forced saves.
 
+When installed alongside the updated `java-navigation` package, `jvm-navigation-host.luau` loads its shared native frontend. **Ctrl+Alt+G / S / B stay unchanged** for Go, Java and Kotlin; one window owns the picker and jump history. Go still uses this package's backend. Both packages must include the shared-frontend integration; run `tern plugin reload` after installing, updating or removing either package. No global keybind settings are changed.
+
 ![Definitions and references grouped in Tern's native picker, with source-line previews](assets/navigation-preview.png)
 
 ![Jumping to a Go function declaration in the native editor](assets/definition-jump.png)
@@ -43,14 +45,14 @@ Download **`go-navigation-<version>-<target>.tar.gz`** and its **`.tar.gz.sha256
 | Linux | Intel / AMD x86-64 | `linux-amd64` |
 | Linux | ARM64 / AArch64 | `linux-arm64` |
 
-For version `1.3.1`, choose the target from the table and run these commands in the download directory:
+For version `1.3.2`, choose the target from the table and run these commands in the download directory:
 
 ```sh
 # Still required for semantic Go navigation:
 go install golang.org/x/tools/gopls@v0.21.1
 
 target=darwin-arm64 # Replace with your target from the table.
-archive="go-navigation-1.3.1-${target}.tar.gz"
+archive="go-navigation-1.3.2-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -184,6 +186,9 @@ In each already-running OMP session, reload its LSP configuration with `action: 
 
 Activity Monitor can still show several `gopls` entries: the shared daemon, lightweight forwarding clients, and Go telemetry helpers. Workspace views remain independent, so memory savings depend on the amount of reusable cache. Release packages include this mode starting with `v1.3.1`; OMP needs the configuration above to participate.
 
+Version `1.3.2` restores gopls's default diagnostic scheduling and completes LSP session shutdown before disconnecting. The previous one-hour diagnostic delay could retain snapshots during shutdown and prevent the daemon from reaching its idle timeout. After upgrading from `v1.3.1`, restart the old shared daemon once to discard already-delayed work, then reload LSP in OMP and rerun navigation as needed. Closing a project tab still retains the plugin session while its Tern process is alive.
+
+
 
 ## Tool discovery and troubleshooting
 
@@ -260,7 +265,7 @@ For local packaging, maintainers need **Go and Python 3.9+**; smoke verification
 
 ```sh
 python3 scripts/package.py --target darwin-arm64 --output dist
-python3 scripts/smoke_release.py dist/go-navigation-1.3.1-darwin-arm64.tar.gz
+python3 scripts/smoke_release.py dist/go-navigation-1.3.2-darwin-arm64.tar.gz
 ```
 
 `--target` defaults to the native platform and accepts the four targets listed above. Cross-compilation is supported; executing the smoke requires the matching OS and architecture. `--source PATH` selects a separate source checkout; the default is this repository.

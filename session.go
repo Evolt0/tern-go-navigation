@@ -93,7 +93,7 @@ func newSession(ctx context.Context, root string) (_ *session, err error) {
 			"workspace": map[string]any{"didChangeWatchedFiles": map[string]any{"dynamicRegistration": true, "relativePatternSupport": true}},
 		},
 		"initializationOptions": map[string]any{
-			"diagnosticsDelay": "1h", "checkUpdates": "off", "symbolScope": "workspace",
+			"checkUpdates": "off", "symbolScope": "workspace",
 		},
 	})
 	if err != nil {
@@ -119,12 +119,29 @@ func (s *session) close() {
 		return
 	}
 	s.closeOnce.Do(func() {
-		s.kill()
-		if s.stdin != nil {
-			_ = s.stdin.Close()
-		}
 		if s.cmd != nil && s.cmd.Process != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			stop := context.AfterFunc(ctx, func() {
+				s.kill()
+				if s.stdin != nil {
+					_ = s.stdin.Close()
+				}
+			})
+			// Dispose this session before disconnecting its forwarder. The daemon
+			// can then release its views and account for the closed connection.
+			if s.rpc != nil {
+				if _, err := s.rpc.call(ctx, "shutdown", nil); err == nil {
+					_ = s.rpc.notify("exit", nil)
+				}
+			}
+			if s.stdin != nil {
+				_ = s.stdin.Close()
+			}
 			_ = s.cmd.Wait()
+			stop()
+			cancel()
+		} else if s.stdin != nil {
+			_ = s.stdin.Close()
 		}
 		if s.watcher != nil {
 			s.watcher.close()

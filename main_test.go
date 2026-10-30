@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -445,15 +446,7 @@ func TestSharedGoplsKeepsClientBuffersAndLifetimesIndependent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(runtimeDir) })
 	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
-	// Keep the real daemon private to this test and reclaim it promptly after
-	// its last client disconnects. The wrapper changes only the idle lifetime.
-	t.Setenv("TERN_TEST_GOPLS", os.Getenv("GOPLS"))
-	wrapper := filepath.Join(t.TempDir(), "gopls")
-	putFile(t, wrapper, "#!/bin/sh\nexec \"$TERN_TEST_GOPLS\" -remote.listen.timeout=5s \"$@\"\n")
-	if err := os.Chmod(wrapper, 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GOPLS", wrapper)
+	gopls := os.Getenv("GOPLS")
 	root, err := canonical(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -465,6 +458,36 @@ func TestSharedGoplsKeepsClientBuffersAndLifetimesIndependent(t *testing.T) {
 	putFile(t, caller, text)
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
+	socket := filepath.Join(runtimeDir, "gopls.sock")
+	daemon := exec.CommandContext(ctx, gopls, "serve", "-listen=unix;"+socket, "-listen.timeout=5s")
+	daemon.Dir = root
+	daemon.Env, err = goEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	daemon.WaitDelay = time.Second
+	var daemonLog boundedLog
+	daemon.Stdout, daemon.Stderr = &daemonLog, &daemonLog
+	if err := daemon.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { _ = daemon.Wait(); close(done) }()
+	t.Cleanup(func() {
+		// Reap only this fixture's process group, including telemetry, even if
+		// an assertion fails before the natural idle shutdown can be observed.
+		_ = syscall.Kill(-daemon.Process.Pid, syscall.SIGKILL)
+		<-done
+	})
+	t.Setenv("TERN_TEST_GOPLS", gopls)
+	t.Setenv("TERN_TEST_GOPLS_SOCKET", socket)
+	wrapper := filepath.Join(t.TempDir(), "gopls")
+	putFile(t, wrapper, "#!/bin/sh\nif [ \"$1\" = -remote=auto ]; then\n shift\n exec \"$TERN_TEST_GOPLS\" \"-remote=unix;$TERN_TEST_GOPLS_SOCKET\" \"$@\"\nfi\nexec \"$TERN_TEST_GOPLS\" \"$@\"\n")
+	if err := os.Chmod(wrapper, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOPLS", wrapper)
 	first, err := newSession(ctx, root)
 	if err != nil {
 		t.Fatal(err)
@@ -482,7 +505,7 @@ func TestSharedGoplsKeepsClientBuffersAndLifetimesIndependent(t *testing.T) {
 	}
 	// The public inspector connects directly to the daemon. Its own connection
 	// is the third client, alongside the two independently initialized editors.
-	inspect := exec.CommandContext(ctx, os.Getenv("TERN_TEST_GOPLS"), "-remote=auto", "remote", "sessions")
+	inspect := exec.CommandContext(ctx, gopls, "-remote=unix;"+socket, "remote", "sessions")
 	inspect.Dir, inspect.Env = root, first.env
 	output, err := inspect.Output()
 	if err != nil {
@@ -519,5 +542,11 @@ func TestSharedGoplsKeepsClientBuffersAndLifetimesIndependent(t *testing.T) {
 	check(first, 3)
 	if data, err := os.ReadFile(target); err != nil || string(data) != "package shared\n\nfunc Saved() {}\n" {
 		t.Fatalf("shared sessions changed saved source: %q, %v", data, err)
+	}
+	first.close()
+	select {
+	case <-done:
+	case <-time.After(8 * time.Second):
+		t.Fatalf("shared daemon did not exit after its last client closed\n%s", daemonLog.String())
 	}
 }
