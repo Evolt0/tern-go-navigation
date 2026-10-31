@@ -26,8 +26,13 @@ end
 local function unchangedPosition(cx: any, origin: any): boolean
 	if cx.session:focused() ~= origin.pane then return false end
 	local current = cx.session:read(origin.pane, { lines = 1, max_chars = 1 })
-	return current ~= nil and current.path == origin.path and current.caret ~= nil
-		and current.caret.line == origin.line and current.caret.col == origin.col
+	if not current or current.path ~= origin.path or not current.caret
+		or current.caret.line ~= origin.line or current.caret.col ~= origin.col then
+		return false
+	end
+	local before, after = origin.selection, current.selection
+	if before == nil or after == nil then return before == after end
+	return before.anchor == after.anchor and before.head == after.head
 end
 
 -- Re-read every captured overlay before navigating: edits during indexing invalidate the result.
@@ -65,6 +70,9 @@ local function goTo(cx: any, action: string, search: string?)
 	local origin = {
 		pane = current.info.pane, path = current.path,
 		line = current.caret.line, col = current.caret.col,
+		selection = if current.selection then {
+			anchor = current.selection.anchor, head = current.selection.head,
+		} else nil,
 	}
 	local paths = { origin.path }
 	local seen = { [origin.path] = true }
@@ -82,6 +90,7 @@ local function goTo(cx: any, action: string, search: string?)
 		local request = tern.json.encode({
 			action = action, search = search,
 			path = origin.path, line = origin.line, col = origin.col, documents = documents,
+			selection = origin.selection,
 			tabWidth = live.settings:get("files.tab_width"),
 		})
 		local progress = tern.timer(600, function(progressCx)

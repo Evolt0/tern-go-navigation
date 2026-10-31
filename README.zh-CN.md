@@ -18,8 +18,9 @@
 - **项目内函数查询** — 输入名称即可搜索项目中未打开文件里的函数、方法、类型和变量，排除标准库、第三方依赖和未加入工作区的嵌套模块。
 - **先看代码，再跳转** — 每条结果显示文件名、行列和命中行代码，完整路径放在代码后面。
 - **支持未保存修改** — 查询和预览使用当前窗口的编辑器缓冲区，不隐式保存或修改源文件。
+- **支持选中标识符** — 双击函数名或正向 / 反向选择名字时，查询选区起点，不把位于选区末尾的光标误当成标识符位置。
 - **提前加载并保留索引** — 聚焦本地 Go 文件后尝试后台预热；编辑器进程存活期间保留 gopls，不再因空闲 5 分钟退出。导航和项目搜索共用同一服务。
-- **可以返回** — 保留窗口内跳转历史；光标或缓冲区改变后，不应用过期的跳转结果。
+- **可以返回** — 保留窗口内跳转历史；光标、选区或缓冲区改变后，不应用过期的跳转结果。
 - **Go 工作区与 Unicode** — 支持 `go.mod`、`go.work`，处理 Tab、中文、emoji 和组合字符的位置转换。
 
 ## 环境要求
@@ -51,11 +52,11 @@ go install golang.org/x/tools/gopls@v0.21.1
 | Linux | Intel / AMD x86-64 | `linux-amd64` |
 | Linux | ARM64 / AArch64 | `linux-arm64` |
 
-以下以 `1.3.2` 为例。下载 `go-navigation-1.3.2-<target>.tar.gz` 及相邻的 `.tar.gz.sha256`，放入同一目录后执行：
+以下以 `1.3.3` 为例。下载 `go-navigation-1.3.3-<target>.tar.gz` 及相邻的 `.tar.gz.sha256`，放入同一目录后执行：
 
 ```sh
 target=darwin-arm64 # 按上表替换为你的平台。
-archive="go-navigation-1.3.2-${target}.tar.gz"
+archive="go-navigation-1.3.3-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -97,11 +98,11 @@ Git 默认克隆到同名的 `tern-go-navigation` 目录，不需要额外指定
 
 ### 更新复制安装的发布包
 
-从 Releases 下载目标平台的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.3.2` 为例，升级时须将版本和 target 换为目标附件：
+从 Releases 下载目标平台的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.3.3` 为例，升级时须将版本和 target 换为目标附件：
 
 ```sh
 target=darwin-arm64 # 按你的系统和处理器选择。
-archive="go-navigation-1.3.2-${target}.tar.gz"
+archive="go-navigation-1.3.3-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -218,6 +219,7 @@ macOS 使用原生 FSEvents，通过 [purego](https://github.com/ebitengine/pure
 - 工作区加载失败：错误提示会保留 gopls 的具体原因，而不是只显示 `no views`。
 - 源码有修改但插件行为没变：重新运行 `go build -o bin/tern-go-navigation .` 和 `tern plugin reload go-navigation`。
 - macOS 提示 **`too many open files`**：当前源码已替换旧 kqueue 后端及其关闭泄漏路径。更新实际安装的插件后端并重新加载插件；升级时重启 Tern 一次，释放旧后台进程残留的句柄。单独构建仓库不会更新另一份复制安装的插件。本次修复不要求调高终端 `ulimit`，调高限制也不能修复旧版泄漏。
+- 选中名字后提示 **`textDocument/references: no identifier found`**：需要同时更新 `window.luau` 和后端，再重新加载插件。当前源码将原生选区的 UTF-8 字节范围转换为 LSP 查询位置，不再使用选区末尾的光标。没有选区时，光标应位于标识符内，而不是括号等标点上。
 
 ## 当前边界
 
@@ -263,13 +265,13 @@ tern plugin reload go-navigation
 
 ```sh
 python3 scripts/package.py --target darwin-arm64 --output dist
-python3 scripts/smoke_release.py dist/go-navigation-1.3.2-darwin-arm64.tar.gz
+python3 scripts/smoke_release.py dist/go-navigation-1.3.3-darwin-arm64.tar.gz
 ```
 
-`--output` 默认为 `dist`，`--source PATH` 可选择单独的源码 checkout，默认使用本仓库。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查验证实际二进制格式与架构，并运行归档中的 CLI。可通过 `--tag v1.3.2` 校验版本，或只校验而不打包：
+`--output` 默认为 `dist`，`--source PATH` 可选择单独的源码 checkout，默认使用本仓库。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查验证实际二进制格式与架构，并运行归档中的 CLI。可通过 `--tag v1.3.3` 校验版本，或只校验而不打包：
 
 ```sh
-python3 scripts/package.py --check-tag v1.3.2
+python3 scripts/package.py --check-tag v1.3.3
 ```
 
 ### 发布流程

@@ -13,9 +13,16 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/rivo/uniseg"
 )
+
+// Native selections use zero-based UTF-8 byte offsets, not caret display cells.
+type editorSelection struct {
+	Anchor int `json:"anchor"`
+	Head   int `json:"head"`
+}
 
 type query struct {
 	Action    string            `json:"action,omitempty"`
@@ -24,6 +31,7 @@ type query struct {
 	Line      int               `json:"line"`
 	Col       int               `json:"col"`
 	TabWidth  int               `json:"tabWidth"`
+	Selection *editorSelection  `json:"selection,omitempty"`
 	Documents map[string]string `json:"documents"`
 }
 
@@ -173,6 +181,27 @@ func ternColumn(text string, pos position, tabWidth int) (int, error) {
 	return 0, errors.New("navigation position outside document or inside a grapheme")
 }
 
+func selectedPosition(text string, selection editorSelection) (position, error) {
+	start, end := selection.Anchor, selection.Head
+	if start > end {
+		start, end = end, start
+	}
+	if start < 0 || end > len(text) {
+		return position{}, errors.New("selection outside document")
+	}
+	for _, offset := range [2]int{start, end} {
+		if offset < len(text) && !utf8.RuneStart(text[offset]) {
+			return position{}, errors.New("selection inside a UTF-8 code point")
+		}
+	}
+	prefix := text[:start]
+	pos := position{Line: strings.Count(prefix, "\n")}
+	for _, ch := range prefix[strings.LastIndexByte(prefix, '\n')+1:] {
+		pos.Character += utf16.RuneLen(ch)
+	}
+	return pos, nil
+}
+
 // GUI applications may inherit only the system PATH, without the installed Go toolchain.
 // Keep an existing PATH selection; otherwise add only the directory containing Go.
 func goEnvironment() ([]string, error) {
@@ -236,6 +265,10 @@ func prepareQuery(q query) (query, position, error) {
 	q.Path, q.Documents = path, documents
 	if q.Action != "navigate" {
 		return q, position{}, nil
+	}
+	if q.Selection != nil && q.Selection.Anchor != q.Selection.Head {
+		pos, err := selectedPosition(text, *q.Selection)
+		return q, pos, err
 	}
 	pos, err := lspPosition(text, q.Line, q.Col, q.TabWidth)
 	return q, pos, err

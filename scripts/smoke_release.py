@@ -195,6 +195,12 @@ def smoke(binary, project):
         })
         require([target["kind"] for target in navigation] == ["definition", "reference", "reference"],
                 "combined navigation must put definitions before references")
+        selected_name = "UnsavedNeedleTarget"
+        anchor = documents[str(caller)].encode("utf-8").index(selected_name.encode("utf-8"))
+        selected = dict(query, col=query["col"] + len(selected_name),
+                        selection={"anchor": anchor, "head": anchor + len(selected_name)})
+        require(run_query(binary, project, env, selected) == navigation,
+                "selecting an unsaved identifier changed its definition/reference destinations")
         symbols = dict(query, action="symbols", search="Needle")
         check_destinations(run_query(binary, project, env, symbols), {
             (str(target), 4, 6): ("symbol", "func UnsavedNeedleTarget() {} // unsaved", "UnsavedNeedleTarget"),
@@ -222,7 +228,7 @@ def main():
         require(target == host,
                 "cannot execute " + target + " release on " + host + "; smoke requires a matching native host")
         smoke(binary, root / "project")
-    print("Release smoke passed: archive, checksum, unsaved combined navigation, and project symbols")
+    print("Release smoke passed: archive, checksum, unsaved caret/selected-symbol navigation, and project symbols")
 
 
 if __name__ == "__main__":
