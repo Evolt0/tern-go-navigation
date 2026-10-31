@@ -211,10 +211,13 @@ tern plugin unlink go-navigation
 
 Go 工具链优先沿用 `PATH`；GUI 环境找不到 `go` 时，依次检查 `$GOROOT/bin`、`/opt/homebrew/bin`、`/usr/local/go/bin`、`/usr/local/bin`，只把找到的目录加入 gopls 子进程环境，不修改系统环境。
 
+macOS 使用原生 FSEvents，通过 [purego](https://github.com/ebitengine/purego) 调用，无需 cgo，也不再为每个源文件持有一个文件描述符。标准库和模块缓存合并原生监听根，事件仍按已注册的包目录过滤。每次查询先等待日志标记往返并排空待处理回调，再查询 gopls；不轮询、不按查询扫描整个工作区。事件丢失或监听根失效会使会话失败并重建，不继续返回可能过期的结果。Linux 继续使用 inotify。
+
 - 提示无法启动 gopls：检查 `gopls version`；自定义安装目录需通过 Tern 继承的 `GOPLS` 或 `PATH` 指定。
 - 提示找不到 Go：检查 `go version`；非标准安装位置需通过 Tern 继承的 `PATH` 或 `GOROOT` 指定。
 - 工作区加载失败：错误提示会保留 gopls 的具体原因，而不是只显示 `no views`。
 - 源码有修改但插件行为没变：重新运行 `go build -o bin/tern-go-navigation .` 和 `tern plugin reload go-navigation`。
+- macOS 提示 **`too many open files`**：当前源码已替换旧 kqueue 后端及其关闭泄漏路径。更新实际安装的插件后端并重新加载插件；升级时重启 Tern 一次，释放旧后台进程残留的句柄。单独构建仓库不会更新另一份复制安装的插件。本次修复不要求调高终端 `ulimit`，调高限制也不能修复旧版泄漏。
 
 ## 当前边界
 
@@ -252,7 +255,7 @@ tern plugin reload go-navigation
 
 此前已在真实 Tern 桌面验证合并列表、代码预览、定义 / 调用跳转、返回、过期结果保护和项目函数查询；确认按键前已自动预热，搜索未打开文件与未保存改名成功，标准库符号被排除，连续操作复用同一 gopls 进程。上方截图来自实际运行的插件与示例 Go 项目，不是设计稿。发布结果请以对应标签的 Actions 日志和 Release 附件为准。
 
-实现分工：`window.luau` 负责原生编辑器、预热和选择器；`main.go` 负责请求与位置转换；`daemon.go`、`session.go`、`rpc.go` 负责常驻语言服务；`symbols.go` 负责项目符号查询和范围过滤；`watch.go` 负责文件变更同步。
+实现分工：`window.luau` 负责原生编辑器、预热和选择器；`main.go` 负责请求与位置转换；`daemon.go`、`session.go`、`rpc.go` 负责常驻语言服务；`symbols.go` 负责项目符号查询和范围过滤；`watch.go` 负责发现监听范围；`watch_darwin.go`、`fsevents_darwin.go` 负责 macOS 事件同步；`watch_fsnotify.go` 保留 inotify 后端。
 
 ### 本地打包与冒烟检查
 

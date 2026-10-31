@@ -196,10 +196,13 @@ The backend finds gopls through `GOPLS`, then `PATH`, then `$HOME/go/bin/gopls`.
 
 It preserves a Go executable already on `PATH`. When a GUI-launched process cannot find Go, it checks `$GOROOT/bin`, `/opt/homebrew/bin`, `/usr/local/go/bin`, and `/usr/local/bin`, adding only the selected directory to the gopls child environment. It does not modify your system environment.
 
+On macOS, disk changes use native FSEvents through [purego](https://github.com/ebitengine/purego), without cgo or a file descriptor for every source file. Native watches group standard-library and module-cache paths while events remain filtered to the registered packages. Queries wait for a journal-marker round trip and flush pending callbacks before consulting gopls; they do not poll or rescan the workspace. Lost events or invalidated roots fail the session rather than returning a potentially stale result. Linux continues to use inotify.
+
 - **Cannot start gopls:** check `gopls version`; expose custom locations through `GOPLS` or `PATH` inherited by Tern.
 - **Go toolchain not found:** check `go version`; expose nonstandard installations through Tern's `PATH` or `GOROOT`.
 - **Workspace loading fails:** the error preserves the underlying gopls explanation instead of only reporting `no views`.
 - **Source changes are not reflected in the plugin:** rebuild with `go build -o bin/tern-go-navigation .`, then run `tern plugin reload go-navigation`.
+- **`too many open files` on macOS:** this source tree replaces the old kqueue backend, including its leaking close path. Update the installed plugin backend, reload the plugin, and restart Tern once to release any handles retained by the old helper. Building the repository alone does not update a separately copied installation. Raising the terminal's `ulimit` is not required by this fix and does not repair the old leak.
 
 ## Limitations
 
@@ -235,7 +238,7 @@ Integration tests require gopls and use temporary projects without network depen
 
 Real Tern desktop verification covers the combined picker, previews, jumps, history, stale-result rejection, automatic warmup, unopened-file searches, and unsaved renames. The screenshots above show the running plugin, not mockups.
 
-`window.luau` integrates the native editor, warmup, and picker; `main.go` handles requests and positions; `daemon.go`, `session.go`, and `rpc.go` maintain language-server sessions; `symbols.go` implements scoped project search; `watch.go` synchronizes file changes.
+`window.luau` integrates the native editor, warmup, and picker; `main.go` handles requests and positions; `daemon.go`, `session.go`, and `rpc.go` maintain language-server sessions; `symbols.go` implements scoped project search; `watch.go` discovers watch scopes; `watch_darwin.go` and `fsevents_darwin.go` synchronize macOS events; `watch_fsnotify.go` retains the inotify backend.
 
 ## Publishing releases
 

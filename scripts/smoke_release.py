@@ -100,9 +100,6 @@ def validate_and_extract(path, destination):
         notices = text("THIRD_PARTY_NOTICES.txt")
         license_paths = re.findall(r"^License: (.+)$", notices, re.MULTILINE)
         require("licenses/Go/LICENSE" in license_paths, "missing Go runtime license notice")
-        for dependency in ("github.com/fsnotify/fsnotify", "github.com/rivo/uniseg", "golang.org/x/sys"):
-            require(any(name.startswith("licenses/" + dependency + "@") for name in license_paths),
-                    "missing compiled dependency license: " + dependency)
         for relative in license_paths + re.findall(r"^Notice: (.+)$", notices, re.MULTILINE):
             require(relative.startswith("licenses/") and relative in files,
                     "notice references missing license content: " + relative)
@@ -119,7 +116,15 @@ def validate_and_extract(path, destination):
                 with archive.extractfile(member) as source, target.open("wb") as output:
                     shutil.copyfileobj(source, output)
             target.chmod(member.mode)
-    return destination / PLUGIN_ID / BINARY
+    binary = destination / PLUGIN_ID / BINARY
+    build_info = subprocess.check_output(["go", "version", "-m", str(binary)], text=True)
+    dependencies = re.findall(r"^\s*dep\s+(\S+)\s+(\S+)", build_info, re.MULTILINE)
+    require(bool(dependencies), "packaged binary has no dependency build information")
+    for dependency, version in dependencies:
+        prefix = "licenses/" + dependency + "@" + version + "/"
+        require(any(name.startswith(prefix) for name in license_paths),
+                "missing compiled dependency license: " + dependency + "@" + version)
+    return binary
 
 
 def run_query(binary, project, env, query, shutdown=False):
