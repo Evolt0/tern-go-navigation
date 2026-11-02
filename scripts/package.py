@@ -22,6 +22,7 @@ BINARY = "bin/tern-go-navigation"
 REQUIRED_FILES = (
     "plugin.toml",
     "window.luau",
+    "jvm-navigation-host.luau",
     "README.md",
     "README.zh-CN.md",
     "docs/reference/changelog.md",

@@ -1,5 +1,8 @@
 --!strict
 
+local sharedHost = assert(loadstring(tern.fs.read(tern.plugin.dir .. "/jvm-navigation-host.luau", 16384), "@jvm-navigation-host.luau"))
+if sharedHost() then return end
+
 local history: { any } = {}
 local generation = 0
 local lastSearch = ""
@@ -150,7 +153,8 @@ end
 
 tern.command({
 	id = "navigate", title = "Go: Navigate symbol", group = "Go Navigation",
-	keys = { "ctrl+alt+g" }, run = function(cx) goTo(cx, "navigate") end,
+	keys = { "ctrl+alt+g" },
+	run = function(cx) goTo(cx, "navigate") end,
 })
 
 tern.command({
