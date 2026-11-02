@@ -1,6 +1,6 @@
 schema = 1
 id = "go-navigation"
 name = "Go Navigation"
-version = "1.3.3"
+version = "1.4.0"
 description = "Native Go navigation, project symbol search, and prewarmed editor-lifetime language servers."
 window = "window.luau"

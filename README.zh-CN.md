@@ -52,11 +52,11 @@ go install golang.org/x/tools/gopls@v0.21.1
 | Linux | Intel / AMD x86-64 | `linux-amd64` |
 | Linux | ARM64 / AArch64 | `linux-arm64` |
 
-以下以 `1.3.3` 为例。下载 `go-navigation-1.3.3-<target>.tar.gz` 及相邻的 `.tar.gz.sha256`，放入同一目录后执行：
+以下以 `1.4.0` 为例。下载 `go-navigation-1.4.0-<target>.tar.gz` 及相邻的 `.tar.gz.sha256`，放入同一目录后执行：
 
 ```sh
 target=darwin-arm64 # 按上表替换为你的平台。
-archive="go-navigation-1.3.3-${target}.tar.gz"
+archive="go-navigation-1.4.0-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -98,11 +98,11 @@ Git 默认克隆到同名的 `tern-go-navigation` 目录，不需要额外指定
 
 ### 更新复制安装的发布包
 
-从 Releases 下载目标平台的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.3.3` 为例，升级时须将版本和 target 换为目标附件：
+从 Releases 下载目标平台的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.4.0` 为例，升级时须将版本和 target 换为目标附件：
 
 ```sh
 target=darwin-arm64 # 按你的系统和处理器选择。
-archive="go-navigation-1.3.3-${target}.tar.gz"
+archive="go-navigation-1.4.0-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -265,13 +265,13 @@ tern plugin reload go-navigation
 
 ```sh
 python3 scripts/package.py --target darwin-arm64 --output dist
-python3 scripts/smoke_release.py dist/go-navigation-1.3.3-darwin-arm64.tar.gz
+python3 scripts/smoke_release.py dist/go-navigation-1.4.0-darwin-arm64.tar.gz
 ```
 
-`--output` 默认为 `dist`，`--source PATH` 可选择单独的源码 checkout，默认使用本仓库。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查验证实际二进制格式与架构，并运行归档中的 CLI。可通过 `--tag v1.3.3` 校验版本，或只校验而不打包：
+`--output` 默认为 `dist`，`--source PATH` 可选择单独的源码 checkout，默认使用本仓库。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查验证实际二进制格式与架构，并运行归档中的 CLI。可通过 `--tag v1.4.0` 校验版本，或只校验而不打包：
 
 ```sh
-python3 scripts/package.py --check-tag v1.3.3
+python3 scripts/package.py --check-tag v1.4.0
 ```
 
 ### 发布流程

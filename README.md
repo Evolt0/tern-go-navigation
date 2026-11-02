@@ -46,14 +46,14 @@ Download **`go-navigation-<version>-<target>.tar.gz`** and its **`.tar.gz.sha256
 | Linux | Intel / AMD x86-64 | `linux-amd64` |
 | Linux | ARM64 / AArch64 | `linux-arm64` |
 
-For version `1.3.3`, choose the target from the table and run these commands in the download directory:
+For version `1.4.0`, choose the target from the table and run these commands in the download directory:
 
 ```sh
 # Still required for semantic Go navigation:
 go install golang.org/x/tools/gopls@v0.21.1
 
 target=darwin-arm64 # Replace with your target from the table.
-archive="go-navigation-1.3.3-${target}.tar.gz"
+archive="go-navigation-1.4.0-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -270,7 +270,7 @@ For local packaging, maintainers need **Go and Python 3.9+**; smoke verification
 
 ```sh
 python3 scripts/package.py --target darwin-arm64 --output dist
-python3 scripts/smoke_release.py dist/go-navigation-1.3.3-darwin-arm64.tar.gz
+python3 scripts/smoke_release.py dist/go-navigation-1.4.0-darwin-arm64.tar.gz
 ```
 
 `--target` defaults to the native platform and accepts the four targets listed above. Cross-compilation is supported; executing the smoke requires the matching OS and architecture. `--source PATH` selects a separate source checkout; the default is this repository.
