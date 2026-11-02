@@ -235,3 +235,53 @@ func TestWatcherDarwinDependencyRootFootprintAndScope(t *testing.T) {
 		t.Errorf("discovered fmt dependencies opened %d descriptors; want at most 96", delta)
 	}
 }
+
+func TestWatcherDarwinReplacedRootsReleaseDescriptors(t *testing.T) {
+	watcherWarmDescriptorFacilities(t)
+	base := watcherTestRoot(t)
+	app := filepath.Join(base, "app")
+	var dependencies []string
+	for i := range 8 {
+		dependency := filepath.Join(base, fmt.Sprintf("dependency-%d", i))
+		putFile(t, filepath.Join(dependency, "go.mod"), "module example.com/dependency\n\ngo 1.23\n")
+		putFile(t, filepath.Join(dependency, "dependency.go"), "package dependency\n")
+		dependencies = append(dependencies, dependency)
+	}
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	env, err := goEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReplacedModule(t, app, "../dependency-0")
+	w, err := newFileWatcher(context.Background(), app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.close()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := w.discover(ctx, app, env); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.changes(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := watcherOpenDescriptors(t)
+	for i := 1; i < len(dependencies); i++ {
+		writeReplacedModule(t, app, "../dependency-"+strconv.Itoa(i))
+		if err := w.discover(ctx, app, env); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := w.changes(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after := watcherOpenDescriptors(t)
+	// Seven stale roots would hold roughly eight descriptors each. Keep a
+	// tolerance for fixed stream/control descriptors without allowing them.
+	if delta := after - before; delta > 24 {
+		t.Errorf("replaced dependency roots retained %d descriptors (before %d, after %d); want at most 24", delta, before, after)
+	}
+}

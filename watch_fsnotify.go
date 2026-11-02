@@ -21,6 +21,7 @@ type fileWatcher struct {
 	watcher      *fsnotify.Watcher
 	mu           sync.Mutex
 	dirs         map[string]bool
+	registered   map[string]bool
 	files        map[string]bool
 	pending      map[string]int
 	err          error
@@ -48,7 +49,7 @@ func newFileWatcher(ctx context.Context, root string) (_ *fileWatcher, err error
 		os.RemoveAll(control)
 		return nil, err
 	}
-	f := &fileWatcher{watcher: w, dirs: make(map[string]bool), files: make(map[string]bool), pending: make(map[string]int), done: make(chan struct{}), control: control, barrier: make(chan fsnotify.Op, 16)}
+	f := &fileWatcher{watcher: w, dirs: make(map[string]bool), registered: make(map[string]bool), files: make(map[string]bool), pending: make(map[string]int), done: make(chan struct{}), control: control, barrier: make(chan fsnotify.Op, 16)}
 	f.root = root
 	f.ctx, f.cancel = context.WithCancel(context.Background())
 	f.marker = marker
@@ -84,20 +85,35 @@ func (f *fileWatcher) add(root string, recursive, changed bool) error {
 }
 
 func (f *fileWatcher) addContext(ctx context.Context, root string, recursive, changed bool) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.addLocked(ctx, root, recursive, changed)
+	_, err := f.addLocked(ctx, root, recursive, changed, false)
+	return err
 }
 
-func (f *fileWatcher) addLocked(ctx context.Context, root string, recursive, changed bool) error {
+// addObserved adds a root discovered from module configuration and returns its
+// key so discovery can release roots it no longer needs.
+func (f *fileWatcher) addObserved(ctx context.Context, root string, recursive bool) (string, error) {
+	return f.addLocked(ctx, root, recursive, false, false)
+}
+
+// addRegistered records roots requested by gopls's dynamic watch registration.
+// Discovery must never prune them, even when module configuration changes.
+func (f *fileWatcher) addRegistered(root string, recursive bool) error {
+	_, err := f.addLocked(f.ctx, root, recursive, false, true)
+	return err
+}
+
+func (f *fileWatcher) addLocked(ctx context.Context, root string, recursive, changed, registered bool) (string, error) {
 	root = filepath.Clean(root)
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return "", nil
 		}
-		return err
+		return "", err
 	}
-	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	if registered {
+		f.registered[root] = true
+	}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -129,6 +145,70 @@ func (f *fileWatcher) addLocked(ctx context.Context, root string, recursive, cha
 		}
 		return nil
 	})
+	return root, err
+}
+
+// retainObserved releases watches and file states that the latest discovery no
+// longer names. inotify spends a watch descriptor per directory, so retaining
+// every replaced module or go.work member would grow without bound until the
+// editor exits. LSP-registered roots and roots covering one are retained.
+func (f *fileWatcher) retainObserved(ctx context.Context, desired map[string]bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	watched := make(map[string]bool, len(f.dirs))
+	for dir, recursive := range f.dirs {
+		watched[dir] = recursive
+	}
+	for dir := range watched {
+		if f.dirWanted(dir, desired, watched) {
+			continue
+		}
+		_ = f.watcher.Remove(dir)
+		delete(f.dirs, dir)
+	}
+	for file := range f.files {
+		if !f.watchedLocked(file) {
+			delete(f.files, file)
+		}
+	}
+	for file := range f.pending {
+		if !f.watchedLocked(file) {
+			delete(f.pending, file)
+		}
+	}
+	return nil
+}
+
+func (f *fileWatcher) dirWanted(dir string, desired, watched map[string]bool) bool {
+	if desired[dir] || f.registered[dir] {
+		return true
+	}
+	inside := func(path, root string) bool {
+		return path != root && strings.HasPrefix(path, strings.TrimSuffix(root, string(filepath.Separator))+string(filepath.Separator))
+	}
+	for path := range desired {
+		if watched[dir] && inside(path, dir) || watched[path] && inside(dir, path) {
+			return true
+		}
+	}
+	for path := range f.registered {
+		if watched[dir] && inside(path, dir) || watched[path] && inside(dir, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *fileWatcher) watchedLocked(file string) bool {
+	for dir, recursive := range f.dirs {
+		if filepath.Dir(file) == dir || recursive && strings.HasPrefix(file, strings.TrimSuffix(dir, string(filepath.Separator))+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fileWatcher) run() {
@@ -173,7 +253,7 @@ func (f *fileWatcher) run() {
 					// Only recursively extend recursive roots, not ancestors or
 					// individually watched dependency package directories.
 					if f.dirs[filepath.Dir(name)] && !ignoredDir(filepath.Base(name)) {
-						if err := f.addLocked(f.ctx, name, true, true); err != nil {
+						if _, err := f.addLocked(f.ctx, name, true, true, false); err != nil {
 							f.err = err
 						}
 					}

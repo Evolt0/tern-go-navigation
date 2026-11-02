@@ -83,7 +83,7 @@ func (f *fileWatcher) register(raw json.RawMessage) error {
 			if strings.HasSuffix(prefix, "/") {
 				root = filepath.Clean(prefix)
 			}
-			if err := f.add(root, strings.Contains(pattern, "**"), false); err != nil {
+			if err := f.addRegistered(root, strings.Contains(pattern, "**")); err != nil {
 				f.mu.Lock()
 				f.err = err
 				f.mu.Unlock()
@@ -122,10 +122,24 @@ func (f *fileWatcher) discover(ctx context.Context, root string, env []string) e
 	// go list can fail for a broken workspace. Let gopls report its richer
 	// workspace error rather than replacing it with a watcher setup error.
 	_ = err
+	desired := make(map[string]bool)
+	observe := func(directory string, recursive bool) error {
+		key, err := f.addObserved(ctx, directory, recursive)
+		if err != nil {
+			return err
+		}
+		if key != "" {
+			desired[key] = true
+		}
+		return nil
+	}
+	if err := observe(root, true); err != nil {
+		return err
+	}
 	projectRoots := make([]string, 0, len(modules))
 	for _, m := range modules {
 		if m.Replace != nil && m.Replace.Version == "" && m.Replace.Dir != "" {
-			if err := f.addContext(ctx, m.Replace.Dir, true, false); err != nil {
+			if err := observe(m.Replace.Dir, true); err != nil {
 				return err
 			}
 		}
@@ -137,7 +151,7 @@ func (f *fileWatcher) discover(ctx context.Context, root string, env []string) e
 			return err
 		}
 		projectRoots = append(projectRoots, moduleRoot)
-		if err := f.addContext(ctx, m.Dir, true, false); err != nil {
+		if err := observe(m.Dir, true); err != nil {
 			return err
 		}
 		var watchErr error
@@ -147,7 +161,7 @@ func (f *fileWatcher) discover(ctx context.Context, root string, env []string) e
 				return err
 			}
 			if p.Dir != "" {
-				if err := f.addContext(ctx, p.Dir, false, false); err != nil {
+				if err := observe(p.Dir, false); err != nil {
 					watchErr = err
 					return err
 				}
@@ -166,6 +180,13 @@ func (f *fileWatcher) discover(ctx context.Context, root string, env []string) e
 	}
 	if err := f.prepareDiscovery(ctx, root, env); err != nil {
 		return err
+	}
+	// A broken module listing is not evidence that previously discovered roots
+	// disappeared, so only prune after a successful module enumeration.
+	if len(modules) > 0 {
+		if err := f.retainObserved(ctx, desired); err != nil {
+			return err
+		}
 	}
 	f.projectRoots = projectRoots
 	return nil

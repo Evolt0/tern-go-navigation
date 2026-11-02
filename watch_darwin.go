@@ -44,6 +44,7 @@ type fileWatcher struct {
 	api         *fseventsAPI
 	stream      *nativeEventStream
 	roots       map[string]darwinWatchRoot
+	registered  map[string]bool
 	rootsDirty  bool
 	nativeBases [2]string
 	files       map[string]darwinFileState
@@ -64,7 +65,7 @@ func newFileWatcher(ctx context.Context, root string) (_ *fileWatcher, err error
 	}
 	f := &fileWatcher{
 		root: root, api: api, gate: make(chan struct{}, 1),
-		roots: make(map[string]darwinWatchRoot),
+		roots: make(map[string]darwinWatchRoot), registered: make(map[string]bool),
 		files: make(map[string]darwinFileState), pending: make(map[string]int),
 	}
 	f.ctx, f.cancel = context.WithCancel(context.Background())
@@ -134,32 +135,53 @@ func (f *fileWatcher) add(root string, recursive, changed bool) error {
 }
 
 func (f *fileWatcher) addContext(ctx context.Context, root string, recursive, changed bool) error {
+	_, err := f.addRoot(ctx, root, recursive, changed, false)
+	return err
+}
+
+// addObserved adds a root discovered from module configuration and returns its
+// canonical key so discovery can release roots it no longer needs.
+func (f *fileWatcher) addObserved(ctx context.Context, root string, recursive bool) (string, error) {
+	return f.addRoot(ctx, root, recursive, false, false)
+}
+
+// addRegistered records roots requested by gopls's dynamic watch registration.
+// Discovery must never prune them, even when module configuration changes.
+func (f *fileWatcher) addRegistered(root string, recursive bool) error {
+	_, err := f.addRoot(f.ctx, root, recursive, false, true)
+	return err
+}
+
+func (f *fileWatcher) addRoot(ctx context.Context, root string, recursive, changed, registered bool) (string, error) {
 	if err := f.acquire(ctx); err != nil {
-		return err
+		return "", err
 	}
 	defer f.release()
 	if err := f.watcherError(); err != nil {
-		return err
+		return "", err
 	}
 	info, err := os.Stat(root)
 	if os.IsNotExist(err) {
-		return nil
+		return "", nil
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("watch root %s is not a directory", root)
+		return "", fmt.Errorf("watch root %s is not a directory", root)
 	}
 	root, err = canonical(root)
 	if err != nil {
-		return err
+		return "", err
+	}
+	if registered {
+		f.registered[root] = true
 	}
 	covered := false
 	for _, existing := range f.roots {
 		if existing.path == root && (existing.recursive || !recursive) || existing.recursive && darwinWithin(root, existing.path) && !darwinIgnoredBelow(root, existing.path, true) {
 			if !changed {
-				return nil
+				return root, nil
 			}
 			covered = true
 		}
@@ -169,7 +191,7 @@ func (f *fileWatcher) addContext(ctx context.Context, root string, recursive, ch
 	since := f.api.currentID()
 	baseline, err := f.snapshot(ctx, root, recursive)
 	if err != nil {
-		return err
+		return "", err
 	}
 	for path, state := range baseline {
 		if _, known := f.files[path]; !known {
@@ -180,7 +202,7 @@ func (f *fileWatcher) addContext(ctx context.Context, root string, recursive, ch
 		}
 	}
 	if covered {
-		return nil
+		return root, nil
 	}
 	if old, ok := f.roots[root]; ok && old.since < since {
 		since = old.since
@@ -197,7 +219,73 @@ func (f *fileWatcher) addContext(ctx context.Context, root string, recursive, ch
 	}
 	f.roots[root] = darwinWatchRoot{path: root, recursive: recursive, since: since}
 	f.rootsDirty = true
-	return nil
+	return root, nil
+}
+
+// retainObserved releases roots and file snapshots that the latest discovery no
+// longer names. Without this, every local replacement or go.work change would
+// keep a native watch root, its descriptors, and its file states until the
+// editor exits. LSP-registered roots and any root covering one are retained.
+func (f *fileWatcher) retainObserved(ctx context.Context, desired map[string]bool) error {
+	if err := f.acquire(ctx); err != nil {
+		return err
+	}
+	defer f.release()
+	dropped := false
+	for path, root := range f.roots {
+		if f.rootWanted(root, desired) {
+			continue
+		}
+		delete(f.roots, path)
+		dropped = true
+	}
+	if !dropped {
+		return nil
+	}
+	f.rootsDirty = true
+	for path := range f.files {
+		if !f.fileCovered(path) {
+			delete(f.files, path)
+		}
+	}
+	for path := range f.pending {
+		if !f.fileCovered(path) {
+			delete(f.pending, path)
+		}
+	}
+	return f.configure(ctx)
+}
+
+func (f *fileWatcher) rootWanted(root darwinWatchRoot, desired map[string]bool) bool {
+	if desired[root.path] || f.registered[root.path] {
+		return true
+	}
+	if !root.recursive {
+		return false
+	}
+	for path := range desired {
+		if darwinWithin(path, root.path) && !darwinIgnoredBelow(path, root.path, true) {
+			return true
+		}
+	}
+	for path := range f.registered {
+		if darwinWithin(path, root.path) && !darwinIgnoredBelow(path, root.path, true) {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *fileWatcher) fileCovered(path string) bool {
+	for _, root := range f.roots {
+		if !darwinWithin(path, root.path) {
+			continue
+		}
+		if root.recursive && !darwinIgnoredBelow(path, root.path, false) || filepath.Dir(path) == root.path {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fileWatcher) snapshot(ctx context.Context, root string, recursive bool) (map[string]darwinFileState, error) {

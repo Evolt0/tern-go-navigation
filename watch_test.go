@@ -161,3 +161,62 @@ func TestWatcherModuleConfigurationFlag(t *testing.T) {
 	// The configuration flag describes a drained batch, not a sticky state.
 	watcherTestChanges(t, w, false)
 }
+
+func writeReplacedModule(t *testing.T, app, dependency string) {
+	t.Helper()
+	putFile(t, filepath.Join(app, "go.mod"),
+		"module example.com/watched\n\ngo 1.23\n\nrequire example.com/dependency v0.0.0\nreplace example.com/dependency => "+dependency+"\n")
+}
+
+// Every local replacement switch used to leave the replaced module watched.
+// The stale root retained its native descriptors and kept reporting edits as
+// changes, so the session grew until the editor exited.
+func TestWatcherDropsReplacedDependencyRoots(t *testing.T) {
+	base := watcherTestRoot(t)
+	app := filepath.Join(base, "app")
+	first, second := filepath.Join(base, "first"), filepath.Join(base, "second")
+	for _, module := range []string{first, second} {
+		putFile(t, filepath.Join(module, "go.mod"), "module example.com/dependency\n\ngo 1.23\n")
+	}
+	firstFile := filepath.Join(first, "dependency.go")
+	secondFile := filepath.Join(second, "dependency.go")
+	putFile(t, firstFile, "package dependency\n")
+	putFile(t, secondFile, "package dependency\n")
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	env, err := goEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReplacedModule(t, app, "../first")
+	w, err := newFileWatcher(context.Background(), app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := w.discover(ctx, app, env); err != nil {
+		t.Fatal(err)
+	}
+	putFile(t, firstFile, "package dependency\n\nvar First = true\n")
+	watcherTestChanges(t, w, false, firstFile)
+
+	// The session drains the module edit first, then rediscovers dependencies.
+	writeReplacedModule(t, app, "../second")
+	if _, modules, err := w.changes(ctx); err != nil {
+		t.Fatal(err)
+	} else if !modules {
+		t.Fatal("go.mod change was not classified as a module configuration change")
+	}
+	if err := w.discover(ctx, app, env); err != nil {
+		t.Fatal(err)
+	}
+	// The replaced module is no longer part of the build. Its edits must not
+	// reach gopls, while the new replacement still reports changes.
+	putFile(t, firstFile, "package dependency\n\nvar First = false\n")
+	putFile(t, secondFile, "package dependency\n\nvar Second = true\n")
+	watcherTestChanges(t, w, false, secondFile)
+	watcherTestChanges(t, w, false)
+}
