@@ -18,8 +18,9 @@ When installed alongside the updated `java-navigation` package, `jvm-navigation-
 - **Project-wide symbol search** — find functions, methods, types, and package-level variables without opening their files first. Dependencies, the standard library, and unrelated modules stay out of the results.
 - **Preview before jumping** — each result shows its file, line, column, source line, and path.
 - **Unsaved buffers work** — queries and previews use the current window's editor content without modifying or saving source files.
+- **Selected identifiers work** — double-clicking or selecting a name in either direction queries the selection start, not the caret at its exclusive end.
 - **Prewarmed, persistent gopls** — loading starts in the background after focusing a Go file. Navigation and search share the same language server throughout the editor process's lifetime.
-- **Jump back safely** — keep a per-window jump history and reject stale navigation after the cursor or captured buffers change.
+- **Jump back safely** — keep a per-window jump history and reject stale navigation after the cursor, selection, or captured buffers change.
 - **Go workspaces and Unicode** — support `go.mod`, `go.work`, tabs, CJK characters, emoji, and combining characters.
 
 ## Install
@@ -45,14 +46,14 @@ Download **`go-navigation-<version>-<target>.tar.gz`** and its **`.tar.gz.sha256
 | Linux | Intel / AMD x86-64 | `linux-amd64` |
 | Linux | ARM64 / AArch64 | `linux-arm64` |
 
-For version `1.3.2`, choose the target from the table and run these commands in the download directory:
+For version `1.3.3`, choose the target from the table and run these commands in the download directory:
 
 ```sh
 # Still required for semantic Go navigation:
 go install golang.org/x/tools/gopls@v0.21.1
 
 target=darwin-arm64 # Replace with your target from the table.
-archive="go-navigation-1.3.2-${target}.tar.gz"
+archive="go-navigation-1.3.3-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -196,10 +197,14 @@ The backend finds gopls through `GOPLS`, then `PATH`, then `$HOME/go/bin/gopls`.
 
 It preserves a Go executable already on `PATH`. When a GUI-launched process cannot find Go, it checks `$GOROOT/bin`, `/opt/homebrew/bin`, `/usr/local/go/bin`, and `/usr/local/bin`, adding only the selected directory to the gopls child environment. It does not modify your system environment.
 
+On macOS, disk changes use native FSEvents through [purego](https://github.com/ebitengine/purego), without cgo or a file descriptor for every source file. Native watches group standard-library and module-cache paths while events remain filtered to the registered packages. Queries wait for a journal-marker round trip and flush pending callbacks before consulting gopls; they do not poll or rescan the workspace. Lost events or invalidated roots fail the session rather than returning a potentially stale result. Linux continues to use inotify.
+
 - **Cannot start gopls:** check `gopls version`; expose custom locations through `GOPLS` or `PATH` inherited by Tern.
 - **Go toolchain not found:** check `go version`; expose nonstandard installations through Tern's `PATH` or `GOROOT`.
 - **Workspace loading fails:** the error preserves the underlying gopls explanation instead of only reporting `no views`.
 - **Source changes are not reflected in the plugin:** rebuild with `go build -o bin/tern-go-navigation .`, then run `tern plugin reload go-navigation`.
+- **`too many open files` on macOS:** this source tree replaces the old kqueue backend, including its leaking close path. Update the installed plugin backend, reload the plugin, and restart Tern once to release any handles retained by the old helper. Building the repository alone does not update a separately copied installation. Raising the terminal's `ulimit` is not required by this fix and does not repair the old leak.
+- **`textDocument/references: no identifier found` after selecting a name:** update both `window.luau` and the backend, then reload the plugin. This source tree uses the native selection's UTF-8 byte range to place the LSP query inside the selected name. With no selection, place the caret inside the identifier rather than on punctuation.
 
 ## Limitations
 
@@ -235,7 +240,7 @@ Integration tests require gopls and use temporary projects without network depen
 
 Real Tern desktop verification covers the combined picker, previews, jumps, history, stale-result rejection, automatic warmup, unopened-file searches, and unsaved renames. The screenshots above show the running plugin, not mockups.
 
-`window.luau` integrates the native editor, warmup, and picker; `main.go` handles requests and positions; `daemon.go`, `session.go`, and `rpc.go` maintain language-server sessions; `symbols.go` implements scoped project search; `watch.go` synchronizes file changes.
+`window.luau` integrates the native editor, warmup, and picker; `main.go` handles requests and positions; `daemon.go`, `session.go`, and `rpc.go` maintain language-server sessions; `symbols.go` implements scoped project search; `watch.go` discovers watch scopes; `watch_darwin.go` and `fsevents_darwin.go` synchronize macOS events; `watch_fsnotify.go` retains the inotify backend.
 
 ## Publishing releases
 
@@ -265,7 +270,7 @@ For local packaging, maintainers need **Go and Python 3.9+**; smoke verification
 
 ```sh
 python3 scripts/package.py --target darwin-arm64 --output dist
-python3 scripts/smoke_release.py dist/go-navigation-1.3.2-darwin-arm64.tar.gz
+python3 scripts/smoke_release.py dist/go-navigation-1.3.3-darwin-arm64.tar.gz
 ```
 
 `--target` defaults to the native platform and accepts the four targets listed above. Cross-compilation is supported; executing the smoke requires the matching OS and architecture. `--source PATH` selects a separate source checkout; the default is this repository.

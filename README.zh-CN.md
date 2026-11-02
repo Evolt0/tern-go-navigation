@@ -18,8 +18,9 @@
 - **项目内函数查询** — 输入名称即可搜索项目中未打开文件里的函数、方法、类型和变量，排除标准库、第三方依赖和未加入工作区的嵌套模块。
 - **先看代码，再跳转** — 每条结果显示文件名、行列和命中行代码，完整路径放在代码后面。
 - **支持未保存修改** — 查询和预览使用当前窗口的编辑器缓冲区，不隐式保存或修改源文件。
+- **支持选中标识符** — 双击函数名或正向 / 反向选择名字时，查询选区起点，不把位于选区末尾的光标误当成标识符位置。
 - **提前加载并保留索引** — 聚焦本地 Go 文件后尝试后台预热；编辑器进程存活期间保留 gopls，不再因空闲 5 分钟退出。导航和项目搜索共用同一服务。
-- **可以返回** — 保留窗口内跳转历史；光标或缓冲区改变后，不应用过期的跳转结果。
+- **可以返回** — 保留窗口内跳转历史；光标、选区或缓冲区改变后，不应用过期的跳转结果。
 - **Go 工作区与 Unicode** — 支持 `go.mod`、`go.work`，处理 Tab、中文、emoji 和组合字符的位置转换。
 
 ## 环境要求
@@ -51,11 +52,11 @@ go install golang.org/x/tools/gopls@v0.21.1
 | Linux | Intel / AMD x86-64 | `linux-amd64` |
 | Linux | ARM64 / AArch64 | `linux-arm64` |
 
-以下以 `1.3.2` 为例。下载 `go-navigation-1.3.2-<target>.tar.gz` 及相邻的 `.tar.gz.sha256`，放入同一目录后执行：
+以下以 `1.3.3` 为例。下载 `go-navigation-1.3.3-<target>.tar.gz` 及相邻的 `.tar.gz.sha256`，放入同一目录后执行：
 
 ```sh
 target=darwin-arm64 # 按上表替换为你的平台。
-archive="go-navigation-1.3.2-${target}.tar.gz"
+archive="go-navigation-1.3.3-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -97,11 +98,11 @@ Git 默认克隆到同名的 `tern-go-navigation` 目录，不需要额外指定
 
 ### 更新复制安装的发布包
 
-从 Releases 下载目标平台的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.3.2` 为例，升级时须将版本和 target 换为目标附件：
+从 Releases 下载目标平台的归档和对应 `.sha256` 文件，在新的解压目录操作，避免旧文件残留。以下以 `1.3.3` 为例，升级时须将版本和 target 换为目标附件：
 
 ```sh
 target=darwin-arm64 # 按你的系统和处理器选择。
-archive="go-navigation-1.3.2-${target}.tar.gz"
+archive="go-navigation-1.3.3-${target}.tar.gz"
 if [ "$(uname -s)" = Darwin ]; then
   shasum -a 256 -c "$archive.sha256"
 else
@@ -211,10 +212,14 @@ tern plugin unlink go-navigation
 
 Go 工具链优先沿用 `PATH`；GUI 环境找不到 `go` 时，依次检查 `$GOROOT/bin`、`/opt/homebrew/bin`、`/usr/local/go/bin`、`/usr/local/bin`，只把找到的目录加入 gopls 子进程环境，不修改系统环境。
 
+macOS 使用原生 FSEvents，通过 [purego](https://github.com/ebitengine/purego) 调用，无需 cgo，也不再为每个源文件持有一个文件描述符。标准库和模块缓存合并原生监听根，事件仍按已注册的包目录过滤。每次查询先等待日志标记往返并排空待处理回调，再查询 gopls；不轮询、不按查询扫描整个工作区。事件丢失或监听根失效会使会话失败并重建，不继续返回可能过期的结果。Linux 继续使用 inotify。
+
 - 提示无法启动 gopls：检查 `gopls version`；自定义安装目录需通过 Tern 继承的 `GOPLS` 或 `PATH` 指定。
 - 提示找不到 Go：检查 `go version`；非标准安装位置需通过 Tern 继承的 `PATH` 或 `GOROOT` 指定。
 - 工作区加载失败：错误提示会保留 gopls 的具体原因，而不是只显示 `no views`。
 - 源码有修改但插件行为没变：重新运行 `go build -o bin/tern-go-navigation .` 和 `tern plugin reload go-navigation`。
+- macOS 提示 **`too many open files`**：当前源码已替换旧 kqueue 后端及其关闭泄漏路径。更新实际安装的插件后端并重新加载插件；升级时重启 Tern 一次，释放旧后台进程残留的句柄。单独构建仓库不会更新另一份复制安装的插件。本次修复不要求调高终端 `ulimit`，调高限制也不能修复旧版泄漏。
+- 选中名字后提示 **`textDocument/references: no identifier found`**：需要同时更新 `window.luau` 和后端，再重新加载插件。当前源码将原生选区的 UTF-8 字节范围转换为 LSP 查询位置，不再使用选区末尾的光标。没有选区时，光标应位于标识符内，而不是括号等标点上。
 
 ## 当前边界
 
@@ -252,7 +257,7 @@ tern plugin reload go-navigation
 
 此前已在真实 Tern 桌面验证合并列表、代码预览、定义 / 调用跳转、返回、过期结果保护和项目函数查询；确认按键前已自动预热，搜索未打开文件与未保存改名成功，标准库符号被排除，连续操作复用同一 gopls 进程。上方截图来自实际运行的插件与示例 Go 项目，不是设计稿。发布结果请以对应标签的 Actions 日志和 Release 附件为准。
 
-实现分工：`window.luau` 负责原生编辑器、预热和选择器；`main.go` 负责请求与位置转换；`daemon.go`、`session.go`、`rpc.go` 负责常驻语言服务；`symbols.go` 负责项目符号查询和范围过滤；`watch.go` 负责文件变更同步。
+实现分工：`window.luau` 负责原生编辑器、预热和选择器；`main.go` 负责请求与位置转换；`daemon.go`、`session.go`、`rpc.go` 负责常驻语言服务；`symbols.go` 负责项目符号查询和范围过滤；`watch.go` 负责发现监听范围；`watch_darwin.go`、`fsevents_darwin.go` 负责 macOS 事件同步；`watch_fsnotify.go` 保留 inotify 后端。
 
 ### 本地打包与冒烟检查
 
@@ -260,13 +265,13 @@ tern plugin reload go-navigation
 
 ```sh
 python3 scripts/package.py --target darwin-arm64 --output dist
-python3 scripts/smoke_release.py dist/go-navigation-1.3.2-darwin-arm64.tar.gz
+python3 scripts/smoke_release.py dist/go-navigation-1.3.3-darwin-arm64.tar.gz
 ```
 
-`--output` 默认为 `dist`，`--source PATH` 可选择单独的源码 checkout，默认使用本仓库。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查验证实际二进制格式与架构，并运行归档中的 CLI。可通过 `--tag v1.3.2` 校验版本，或只校验而不打包：
+`--output` 默认为 `dist`，`--source PATH` 可选择单独的源码 checkout，默认使用本仓库。打包输出归档和相邻的 `.tar.gz.sha256`，冒烟检查验证实际二进制格式与架构，并运行归档中的 CLI。可通过 `--tag v1.3.3` 校验版本，或只校验而不打包：
 
 ```sh
-python3 scripts/package.py --check-tag v1.3.2
+python3 scripts/package.py --check-tag v1.3.3
 ```
 
 ### 发布流程
