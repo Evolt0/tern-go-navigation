@@ -85,6 +85,8 @@ func (f *fileWatcher) add(root string, recursive, changed bool) error {
 }
 
 func (f *fileWatcher) addContext(ctx context.Context, root string, recursive, changed bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	_, err := f.addLocked(ctx, root, recursive, changed, false)
 	return err
 }
@@ -92,12 +94,16 @@ func (f *fileWatcher) addContext(ctx context.Context, root string, recursive, ch
 // addObserved adds a root discovered from module configuration and returns its
 // key so discovery can release roots it no longer needs.
 func (f *fileWatcher) addObserved(ctx context.Context, root string, recursive bool) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.addLocked(ctx, root, recursive, false, false)
 }
 
 // addRegistered records roots requested by gopls's dynamic watch registration.
 // Discovery must never prune them, even when module configuration changes.
 func (f *fileWatcher) addRegistered(root string, recursive bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	_, err := f.addLocked(f.ctx, root, recursive, false, true)
 	return err
 }

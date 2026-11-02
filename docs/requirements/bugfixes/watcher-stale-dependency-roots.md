@@ -18,6 +18,7 @@
 - gopls 通过 `client/registerCapability` 动态注册的根单独记录，永不因模块变化被裁剪；覆盖这些注册根的递归根也保留。
 - 裁剪后立即重配原生流（macOS）或移除 inotify watch（Linux），句柄在本次查询内回收，而不是等下一次查询。
 - 模块枚举失败时不裁剪，避免把暂时无法解析的模块误判为根消失。
+- Linux 的根注册、发现裁剪与事件循环共用同一互斥锁，避免并发读写目录和文件状态；`-race` 回归覆盖该路径。
 - Linux 裁剪基于目录快照计算保留集，结果与 map 迭代顺序无关。
 
 ## 验证
@@ -26,4 +27,4 @@
 - 新增 `TestWatcherDarwinReplacedRootsReleaseDescriptors`：8 次切换后描述符增量不超过 24。修复前残留 84 个，修复后通过。
 - `CGO_ENABLED=0 go test -count=3 ./...`、`go test -race ./...` 通过；既有描述符用例连续 5 轮通过。
 - 真实 CLI 连续切换 300 次 `replace`：描述符恒为 41，RSS 从 16.6 MiB 增至 22.3 MiB 后趋于平稳，300 次导航结果均指向当前替换模块。
-- Linux arm64 / amd64 交叉编译通过；运行时用例由发布工作流在 Linux 执行。
+- Linux arm64 / amd64 交叉编译通过；Linux arm64 容器内 `CGO_ENABLED=1 go test -race` 通过（仅跳过 alpine 缺少 `/usr/bin/true` 的环境相关用例），发布工作流在 Linux 原生 runner 再次执行 race 测试。
